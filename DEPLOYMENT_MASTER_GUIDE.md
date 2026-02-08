@@ -2,7 +2,7 @@
 
 This guide covers how to deploy the entire Rename Tool application from scratch using your new repository.
 
-**Repository:** `https://github.com/MASTER3389/rename-tools`
+**Repository:** `https://github.com/johnny88886/Rename`
 
 ---
 
@@ -13,7 +13,7 @@ The backend is an API server that handles all the logic (renaming, fetching file
 ### Steps:
 1. **Go to [Render Dashboard](https://dashboard.render.com/)**
 2. Click **"New +"** → **"Web Service"**
-3. Connect your GitHub repo: `MASTER3389/rename-tools`
+3. Connect your GitHub repo: `johnny88886/Rename`
 4. **Configure Settings:**
    - **Name:** `rename-tool-backend` (or similar)
    - **Root Directory:** `backend` (IMPORTANT!)
@@ -49,7 +49,7 @@ The frontend is the Dashboard UI that you interact with.
 ### Steps:
 1. **Go to [Vercel Dashboard](https://vercel.com/dashboard)**
 2. Click **"Add New..."** → **"Project"**
-3. Import your GitHub repo: `MASTER3389/rename-tools`
+3. Import your GitHub repo: `johnny88886/Rename`
 4. **Configure Settings:**
    - **Framework Preset:** `Vite`
    - **Root Directory:** Click "Edit" and select `frontend` folder

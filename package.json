@@ -1,0 +1,13 @@
+{
+    "name": "video-rename-dashboard-root",
+    "version": "1.0.0",
+    "scripts": {
+        "start": "concurrently \"npm start --prefix backend\" \"npm run dev --prefix frontend\"",
+        "dev": "concurrently \"npm start --prefix backend\" \"npm run dev --prefix frontend\"",
+        "backend": "npm start --prefix backend",
+        "frontend": "npm run dev --prefix frontend"
+    },
+    "devDependencies": {
+        "concurrently": "^8.2.2"
+    }
+}

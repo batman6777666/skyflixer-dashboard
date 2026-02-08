@@ -1,0 +1,77 @@
+import axios from 'axios';
+
+class StreamP2PAPI {
+    constructor(apiKey) {
+        this.apiKey = apiKey;
+        this.baseURL = 'https://streamp2p.com/api/v1';
+        this.client = axios.create({
+            baseURL: this.baseURL,
+            headers: {
+                'api-token': this.apiKey,
+                'Content-Type': 'application/json'
+            },
+            timeout: 30000
+        });
+    }
+
+    /**
+     * Fetch list of files
+     * @param {number} page - Page number
+     * @param {number} perPage - Items per page
+     * @returns {Promise<Array>} - Array of files
+     */
+    async listFiles(page = 1, perPage = 100) {
+        try {
+            // Confirmed Endpoint: GET /video/manage
+            // Structure: { data: [ { id: "...", name: "..." }, ... ] }
+            const response = await this.client.get('/video/manage', {
+                params: { page, per_page: perPage }
+            });
+
+            if (response.data && Array.isArray(response.data.data)) {
+                return response.data.data.map(file => ({
+                    ...file,
+                    platform: 'streamp2p',
+                    fileId: file.id // ID is directly available
+                }));
+            }
+
+            return [];
+        } catch (error) {
+            console.error('StreamP2P listFiles error:', error.message);
+            // We don't throw to allow other platforms to load
+            return [];
+        }
+    }
+
+    /**
+     * Rename a file
+     * Endpoint: PATCH /api/v1/video/manage/{id}
+     * @param {string} fileId - Video ID
+     * @param {string} newName - New filename
+     * @returns {Promise<Object>} - Response object
+     */
+    async renameFile(fileId, newName) {
+        try {
+            // New Endpoint: PATCH /video/manage/{id}
+            const response = await this.client.patch(`/video/manage/${fileId}`, {
+                name: newName
+            });
+
+            return {
+                success: true,
+                platform: 'streamp2p',
+                message: 'File renamed successfully'
+            };
+        } catch (error) {
+            console.error(`StreamP2P renameFile error for ${fileId}:`, error.message);
+            return {
+                success: false,
+                platform: 'streamp2p',
+                error: error.message
+            };
+        }
+    }
+}
+
+export default StreamP2PAPI;

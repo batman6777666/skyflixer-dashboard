@@ -2,14 +2,14 @@ FROM node:20-slim
 
 WORKDIR /app
 
-# Copy package files and install dependencies
+# Install dependencies
 COPY package.json package-lock.json* ./
 RUN npm install --production
 
-# Copy all source files
+# Copy all backend source files
 COPY . .
 
-# HuggingFace Spaces requires port 7860
+# HuggingFace Spaces must use port 7860
 ENV PORT=7860
 ENV NODE_ENV=production
 

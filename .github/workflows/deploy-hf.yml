@@ -28,14 +28,8 @@ jobs:
           # Clear old files (keep .git)
           find hf-space -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
 
-          # Copy backend files to HF Space root
-          cp -r backend/* hf-space/
-
-          # Copy root Dockerfile (the one that works with flat structure)
-          cp Dockerfile hf-space/Dockerfile
-
-          # Copy README with HF frontmatter
-          cp README.md hf-space/README.md
+          # Copy backend files to HF Space root (backend IS the HF Space)
+          cp -r backend/. hf-space/
 
           # Commit and push
           cd hf-space

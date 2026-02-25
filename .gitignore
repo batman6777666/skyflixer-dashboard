@@ -3,10 +3,10 @@ node_modules/
 package-lock.json
 yarn.lock
 
-# Environment variables
+# Environment variables — real secrets stay out of git
 .env
 .env.local
-.env.production
+# .env.production is committed — CF Pages needs it for VITE_ vars at build time
 
 # Database files
 *.db
@@ -32,6 +32,8 @@ Thumbs.db
 logs/
 *.log
 npm-debug.log*
+server-out.txt
+server-err.txt
 
 # Test and debug files (don't deploy to production)
 backend/test-*.js

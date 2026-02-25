@@ -4,7 +4,7 @@ import SeekStreamingAPI from '../api/SeekStreamingAPI.js';
 import UPnShareAPI from '../api/UPnShareAPI.js';
 
 /**
- * Fetch files from all platforms in parallel
+ * Fetch ALL files from all platforms using deep scan (all pages)
  * @param {Object} apiKeys - Object containing all API keys
  * @returns {Promise<Array>} - Array of unique files with platform information
  */
@@ -15,15 +15,15 @@ export async function fetchFilesFromAllPlatforms(apiKeys) {
     const seekClient = new SeekStreamingAPI(apiKeys.seekstreaming[0]);
     const upnClient = new UPnShareAPI(apiKeys.upnshare[0]);
 
-    console.log('🔄 Fetching files from all platforms...');
+    console.log('\n🔍 DEEP SCAN: Fetching ALL files from ALL pages on all platforms...\n');
 
     try {
-        // Fetch from all platforms in parallel
+        // Deep scan all platforms in parallel — each fetches every page
         const [rpmFiles, streamFiles, seekFiles, upnFiles] = await Promise.allSettled([
-            rpmClient.listFiles(),
-            streamClient.listFiles(),
-            seekClient.listFiles(),
-            upnClient.listFiles()
+            rpmClient.listAllFiles(),
+            streamClient.listAllFiles(),
+            seekClient.listAllFiles(),
+            upnClient.listAllFiles()
         ]);
 
         // Extract successful results
@@ -32,32 +32,44 @@ export async function fetchFilesFromAllPlatforms(apiKeys) {
         const seekFilesData = seekFiles.status === 'fulfilled' ? seekFiles.value : [];
         const upnFilesData = upnFiles.status === 'fulfilled' ? upnFiles.value : [];
 
-        console.log(`📊 Fetched: RPMShare=${rpmFilesData.length}, StreamP2P=${streamFilesData.length}, SeekStreaming=${seekFilesData.length}, UPnShare=${upnFilesData.length}`);
+        console.log(`\n📊 Deep scan complete:`);
+        console.log(`   RPMShare    = ${rpmFilesData.length} files`);
+        console.log(`   StreamP2P   = ${streamFilesData.length} files`);
+        console.log(`   SeekStreaming = ${seekFilesData.length} files`);
+        console.log(`   UPnShare    = ${upnFilesData.length} files`);
+        console.log(`   TOTAL RAW   = ${rpmFilesData.length + streamFilesData.length + seekFilesData.length + upnFilesData.length} files\n`);
 
-        // 🚫 FILTER OUT FILES ENDING WITH "SKYFLIX"
-        // User requirement: Do not fetch files whose name ends with "SKYFLIX"
-        const filterSkyflix = (files) => {
-            return files.filter(file => {
+        // 🚫 FILTER OUT FILES CONTAINING "SKYFLIXER" ANYWHERE IN THE NAME
+        // Show all files EXCEPT those that have "SKYFLIXER" branding
+        const filterSkyflix = (files, platformName) => {
+            const filtered = files.filter(file => {
                 const name = file.name || '';
-                const endsWithSkyflix = name.trim().toLowerCase().endsWith('skyflix');
-                if (endsWithSkyflix) {
-                    console.log(`🚫 Filtered out SKYFLIX file: ${name}`);
+                const hasSkyflixer = name.toLowerCase().includes('skyflixer');
+                if (hasSkyflixer) {
+                    console.log(`🚫 [${platformName}] Filtered: ${name}`);
                 }
-                return !endsWithSkyflix;
+                return !hasSkyflixer; // EXCLUDE SKYFLIXER files, show everything else
             });
+            const removed = files.length - filtered.length;
+            if (removed > 0) {
+                console.log(`   ✂️  ${platformName}: removed ${removed} SKYFLIXER file(s), kept ${filtered.length}`);
+            }
+            return filtered;
         };
 
-        const rpmFiltered = filterSkyflix(rpmFilesData);
-        const streamFiltered = filterSkyflix(streamFilesData);
-        const seekFiltered = filterSkyflix(seekFilesData);
-        const upnFiltered = filterSkyflix(upnFilesData);
+        const rpmFiltered = filterSkyflix(rpmFilesData, 'RPMShare');
+        const streamFiltered = filterSkyflix(streamFilesData, 'StreamP2P');
+        const seekFiltered = filterSkyflix(seekFilesData, 'SeekStreaming');
+        const upnFiltered = filterSkyflix(upnFilesData, 'UPnShare');
 
-        console.log(`✅ After SKYFLIX filter: RPMShare=${rpmFiltered.length}, StreamP2P=${streamFiltered.length}, SeekStreaming=${seekFiltered.length}, UPnShare=${upnFiltered.length}`);
+        const totalAfterFilter = rpmFiltered.length + streamFiltered.length + seekFiltered.length + upnFiltered.length;
+        console.log(`\n✅ SKYFLIXER-only filter: RPMShare=${rpmFiltered.length}, StreamP2P=${streamFiltered.length}, SeekStreaming=${seekFiltered.length}, UPnShare=${upnFiltered.length}`);
+        console.log(`   TOTAL KEPT = ${totalAfterFilter} files\n`);
 
-        // Match files across platforms
+        // Match files across platforms using smart normalization
         const matchedFiles = matchFilesAcrossPlatforms(rpmFiltered, streamFiltered, seekFiltered, upnFiltered);
 
-        console.log(`✅ Total unique files: ${matchedFiles.length}`);
+        console.log(`✅ Total unique groups: ${matchedFiles.length}`);
 
         return matchedFiles;
     } catch (error) {
@@ -76,9 +88,9 @@ function normalizeFilename(filename) {
     // Remove file extension
     let name = filename.replace(/\.(mkv|mp4|avi|mov|wmv)$/i, '');
 
-    // Remove quality indicators, "SKYFLIX", and metadata
+    // Remove quality indicators, "SKYFLIXER", and metadata
     const removePatterns = [
-        /\s*SKYFLIX\s*/gi,
+        /\s*SKYFLIXER\s*/gi,
         /\s*1080P\s*/gi,
         /\s*720P\s*/gi,
         /\s*2160P\s*/gi,
@@ -119,7 +131,6 @@ function normalizeFilename(filename) {
 
 /**
  * Match files across platforms and create unique list
- * CRITICAL: Filters out files containing "SKYFLIX" in filename
  * @param {Array} rpmFiles - Files from RPMShare
  * @param {Array} streamFiles - Files from StreamP2P
  * @param {Array} seekFiles - Files from SeekStreaming
@@ -129,7 +140,6 @@ function normalizeFilename(filename) {
 function matchFilesAcrossPlatforms(rpmFiles, streamFiles, seekFiles, upnFiles) {
     const fileMap = new Map();
 
-    // Process all platforms
     const allPlatformFiles = [
         { files: rpmFiles, platform: 'rpmshare' },
         { files: streamFiles, platform: 'streamp2p' },
@@ -139,26 +149,18 @@ function matchFilesAcrossPlatforms(rpmFiles, streamFiles, seekFiles, upnFiles) {
 
     allPlatformFiles.forEach(({ files, platform }) => {
         files.forEach(file => {
-            // 🎯 SMART FILENAME NORMALIZATION
-            // Different platforms use different formats:
-            // UPN: "It.Welcome.To.Derry.S01E01.1080P.Hindi.English.Msubs.MoviesMod.plus.mkv"
-            // RPM: "It: Welcome to Derry S01E01 The Pilot SKYFLIX"
-            // We extract: show name + episode number to create a normalized key
-
             const originalName = file.name;
-            let normalizedKey = normalizeFilename(originalName);
+            const normalizedKey = normalizeFilename(originalName);
 
-            // Add or update file in map using normalized key
             if (!fileMap.has(normalizedKey)) {
                 fileMap.set(normalizedKey, {
-                    filename: originalName, // Use original name for display
+                    filename: originalName,
                     platforms: [],
                     created_at: file.created_at,
                     size: file.size
                 });
             }
 
-            // Add platform information
             fileMap.get(normalizedKey).platforms.push({
                 platform: platform,
                 fileId: file.fileId

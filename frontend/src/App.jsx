@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppProvider } from './context/AppContext';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -9,29 +9,35 @@ import RenameSection from './components/RenameSection/RenameSection';
 import Dashboard from './components/Dashboard/Dashboard';
 
 function App() {
+    const [theme, setTheme] = useState(() =>
+        localStorage.getItem('theme') || 'dark'
+    );
+
+    useEffect(() => {
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('theme', theme);
+    }, [theme]);
+
+    const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
+
     return (
         <AppProvider>
-            <div className="min-h-screen bg-primary-bg">
-                <Header />
+            <div style={{ minHeight: '100vh', background: 'var(--color-primary-bg)', transition: 'background 0.3s ease' }}>
+                <Header theme={theme} toggleTheme={toggleTheme} />
                 <main>
                     <RenameSection />
                     <Dashboard />
                 </main>
 
-                {/* Toast Notifications */}
                 <ToastContainer
                     position="top-right"
-                    autoClose={5000}
+                    autoClose={4000}
                     hideProgressBar={false}
                     newestOnTop
                     closeOnClick
-                    rtl={false}
-                    pauseOnFocusLoss
-                    draggable
                     pauseOnHover
-                    theme="dark"
+                    theme={theme === 'dark' ? 'dark' : 'light'}
                     style={{ zIndex: 99999 }}
-                    toastStyle={{ backgroundColor: '#1a1a2e', color: '#fff' }}
                 />
             </div>
         </AppProvider>

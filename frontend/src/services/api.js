@@ -4,7 +4,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 
 const apiClient = axios.create({
     baseURL: API_BASE_URL,
-    timeout: 60000, // 60 seconds for batch operations
+    timeout: 120000, // 2 minutes for deep scan operations
     headers: {
         'Content-Type': 'application/json'
     }
@@ -57,8 +57,54 @@ export async function getStats() {
     }
 }
 
+/**
+ * Scan all platforms and find duplicate files
+ * @returns {Promise<Object>} - { duplicates, totalDuplicates }
+ */
+export async function findDuplicates() {
+    try {
+        const response = await apiClient.get('/find-duplicates');
+        return response.data;
+    } catch (error) {
+        console.error('API Error (findDuplicates):', error);
+        throw new Error(error.response?.data?.error || 'Failed to find duplicates');
+    }
+}
+
+/**
+ * Delete all duplicate files across all platforms (keeps 1 copy per name)
+ * @returns {Promise<Object>} - { results, totalDeleted, totalFailed }
+ */
+export async function deleteDuplicates() {
+    try {
+        const response = await apiClient.post('/delete-duplicates');
+        return response.data;
+    } catch (error) {
+        console.error('API Error (deleteDuplicates):', error);
+        throw new Error(error.response?.data?.error || 'Failed to delete duplicates');
+    }
+}
+
+/**
+ * Compare all platforms and find files missing from any platform
+ * @returns {Promise<Object>} - { missingFiles, totalMissing, platformCounts }
+ */
+export async function findMissingFiles() {
+    try {
+        const response = await apiClient.get('/missing-files');
+        return response.data;
+    } catch (error) {
+        console.error('API Error (findMissingFiles):', error);
+        throw new Error(error.response?.data?.error || 'Failed to check missing files');
+    }
+}
+
 export default {
     fetchFiles,
     renameBatch,
-    getStats
+    getStats,
+    findDuplicates,
+    deleteDuplicates,
+    findMissingFiles
 };
+

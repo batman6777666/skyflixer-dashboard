@@ -90,22 +90,22 @@ export default function RightBox() {
 
     return (
         <div className="flex-1">
-            <div className="glass-card p-6">
+            <div className="glass-card p-4 sm:p-6">
                 {/* Header */}
                 <div className="mb-4">
-                    <h2 className="text-2xl font-bold text-text-primary mb-4">
+                    <h2 className="text-xl sm:text-2xl font-bold text-text-primary mb-4">
                         ✏️ Renamed Files
                     </h2>
 
-                    {/* Action Buttons */}
-                    <div className="flex gap-3 mb-4">
+                    {/* Action Buttons — wrap on mobile so they don't disappear */}
+                    <div className="flex flex-wrap gap-2 sm:gap-3 mb-4">
                         <Button
                             onClick={handleGoRename}
                             variant="green"
                             loading={renameProgress.isProcessing}
                             disabled={!hasFiles}
                             icon="🚀"
-                            className="flex-1"
+                            className="flex-1 min-w-[110px]"
                         >
                             Go Rename
                         </Button>
@@ -115,6 +115,7 @@ export default function RightBox() {
                             variant="purple"
                             disabled={!hasFiles}
                             icon="📋"
+                            className="min-w-[80px]"
                         >
                             Paste
                         </Button>
@@ -124,6 +125,7 @@ export default function RightBox() {
                             variant="purple"
                             disabled={!hasFiles}
                             icon="🔄"
+                            className="min-w-[80px]"
                         >
                             Reset
                         </Button>

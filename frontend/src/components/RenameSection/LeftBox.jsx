@@ -15,7 +15,7 @@ export default function LeftBox() {
             const response = await fetchFiles();
             if (response.success) {
                 updateFiles(response.files || []);
-                toast.success(`✅ Fetched ${response.count} files (SKYFLIX files excluded)`);
+                toast.success(`✅ Fetched ${response.count} files (SKYFLIXER files excluded)`);
             }
         } catch (error) {
             toast.error(`❌ ${error.message}`);
@@ -48,21 +48,21 @@ export default function LeftBox() {
 
     return (
         <div className="flex-1">
-            <div className="glass-card p-6">
+            <div className="glass-card p-4 sm:p-6">
                 {/* Header */}
                 <div className="mb-4">
-                    <h2 className="text-2xl font-bold text-text-primary mb-4">
+                    <h2 className="text-xl sm:text-2xl font-bold text-text-primary mb-4">
                         📄 Original Files
                     </h2>
 
                     {/* Action Buttons */}
-                    <div className="flex gap-3 mb-4">
+                    <div className="flex flex-wrap gap-3 mb-4">
                         <Button
                             onClick={handleFetchFiles}
                             variant="purple"
                             loading={isLoading}
                             icon="🔄"
-                            className="flex-1"
+                            className="flex-1 min-w-[130px]"
                         >
                             Fetch All Files
                         </Button>
@@ -72,6 +72,7 @@ export default function LeftBox() {
                             variant="purple"
                             disabled={!hasFiles}
                             icon="📋"
+                            className="min-w-[100px]"
                         >
                             Copy All
                         </Button>
@@ -141,9 +142,9 @@ export default function LeftBox() {
                                             <div
                                                 key={i}
                                                 className={`platform-badge ${p.platform === 'rpmshare' ? 'rpm' :
-                                                        p.platform === 'streamp2p' ? 'stream' :
-                                                            p.platform === 'seekstreaming' ? 'seek' :
-                                                                p.platform === 'upnshare' ? 'upn' : 'seek'
+                                                    p.platform === 'streamp2p' ? 'stream' :
+                                                        p.platform === 'seekstreaming' ? 'seek' :
+                                                            p.platform === 'upnshare' ? 'upn' : 'seek'
                                                     }`}
                                                 title={p.platform}
                                             >

@@ -4,24 +4,25 @@ export default {
         "./index.html",
         "./src/**/*.{js,ts,jsx,tsx}",
     ],
+    darkMode: ['selector', '[data-theme="dark"]'],
     theme: {
         extend: {
             colors: {
                 primary: {
-                    bg: '#0f0f23',
-                    secondary: '#1a1a2e',
-                    border: '#2D2D44'
+                    bg: 'var(--color-primary-bg)',
+                    secondary: 'var(--color-secondary-bg)',
+                    border: 'var(--color-border)'
                 },
                 accent: {
-                    purple: '#6C63FF',
+                    purple: 'var(--color-accent-purple)',
                     purpleDark: '#5B54E8',
-                    green: '#00D9A3',
+                    green: 'var(--color-accent-green)',
                     greenDark: '#00BF8F',
-                    red: '#FF6B6B'
+                    red: 'var(--color-accent-red)'
                 },
                 text: {
-                    primary: '#FFFFFF',
-                    secondary: '#B8B8D0'
+                    primary: 'var(--color-text-primary)',
+                    secondary: 'var(--color-text-secondary)'
                 }
             },
             fontFamily: {

@@ -1,0 +1,44 @@
+name: Deploy Backend → HuggingFace
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy-to-huggingface:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout GitHub repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push backend to HuggingFace Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: skyflixerdashboard/skyflixer-dashboard
+        run: |
+          git config --global user.email "deploy@github.com"
+          git config --global user.name "GitHub Actions"
+
+          # Clone the HuggingFace Space
+          git clone https://skyflixerdashboard:$HF_TOKEN@huggingface.co/spaces/$HF_SPACE hf-space
+
+          # Clear old files (keep .git)
+          find hf-space -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+
+          # Copy backend files to HF Space root
+          cp -r backend/* hf-space/
+
+          # Copy root Dockerfile (the one that works with flat structure)
+          cp Dockerfile hf-space/Dockerfile
+
+          # Copy README with HF frontmatter
+          cp README.md hf-space/README.md
+
+          # Commit and push
+          cd hf-space
+          git add -A
+          git commit -m "🚀 Auto-deploy from GitHub $(date '+%Y-%m-%d %H:%M')" || echo "Nothing to commit"
+          git push https://skyflixerdashboard:$HF_TOKEN@huggingface.co/spaces/$HF_SPACE main

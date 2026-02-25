@@ -10,15 +10,14 @@ dotenv.config();
 
 // Initialize Express app
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5000; // 5000 locally, 7860 on HuggingFace
 
 // Middleware
-// Middleware
 app.use(cors({
-    origin: '*', // Allow all origins (for now, to fix deployment issues)
+    origin: '*', // Works for both localhost and HuggingFace/Cloudflare
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-    credentials: true
+    credentials: false  // Must be false when origin is '*'
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

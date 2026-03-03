@@ -10,27 +10,13 @@ dotenv.config();
 
 // Initialize Express app
 const app = express();
-const PORT = process.env.PORT || 5000; // 5000 locally, 7860 on HuggingFace
+const PORT = process.env.PORT || 5000;
 
-// Allowed origins — Cloudflare Pages, HuggingFace Space, and localhost
-const ALLOWED_ORIGINS = [
-    'https://skyflixer-dashboard.pages.dev',
-    'https://skyflixerdashboard-skyflixer-dashboard.hf.space',
-    'http://localhost:3000',
-    'http://localhost:5000',
-    'http://localhost:5173'
-];
-
+// CORS — allow all origins (frontend uses Vite proxy in dev, CF Pages in prod)
 app.use(cors({
-    origin: (origin, callback) => {
-        // Allow requests with no origin (mobile apps, curl, Postman)
-        if (!origin) return callback(null, true);
-        if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-        callback(new Error(`CORS blocked: ${origin}`));
-    },
+    origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-    credentials: true
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

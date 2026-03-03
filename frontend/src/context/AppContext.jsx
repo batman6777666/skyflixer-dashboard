@@ -43,6 +43,7 @@ export function AppProvider({ children }) {
     // UI state
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
+    const [currentPage, setCurrentPage] = useState(0); // 20-file pagination
 
     // Initial load flag to prevent double-fetching in React 18 Strict Mode
     const [isInitialized, setIsInitialized] = useState(false);
@@ -147,14 +148,16 @@ export function AppProvider({ children }) {
         updateRenameProgress,
         stats,
         setStats,
-        fetchStats, // Exposed for manual refresh
+        fetchStats,
         activityLog,
         addActivityLog,
         isLoading,
         setIsLoading,
         error,
         setError,
-        clearError
+        clearError,
+        currentPage,
+        setCurrentPage
     };
 
     return (

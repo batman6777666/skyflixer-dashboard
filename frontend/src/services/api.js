@@ -1,6 +1,9 @@
 import axios from 'axios';
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000') + '/api';
+// Dev: use relative /api (Vite proxy → localhost:5000, no CORS)
+// Prod: use VITE_API_BASE_URL from Cloudflare env variable
+const apiBase = import.meta.env.VITE_API_BASE_URL;
+const API_BASE_URL = apiBase ? `${apiBase}/api` : '/api';
 
 const apiClient = axios.create({
     baseURL: API_BASE_URL,
@@ -32,14 +35,26 @@ export async function fetchFiles() {
  */
 export async function renameBatch(files, newNames) {
     try {
-        const response = await apiClient.post('/rename-batch', {
-            files,
-            newNames
-        });
-        return response.data;
+        const response = await apiClient.post('/rename-batch', { files, newNames });
+        return response.data; // returns { success, jobId, totalFiles }
     } catch (error) {
         console.error('API Error (renameBatch):', error);
         throw new Error(error.response?.data?.error || 'Failed to rename files');
+    }
+}
+
+/**
+ * Poll rename job status
+ * @param {string} jobId
+ * @returns {Promise<Object>} - { status, currentFile, totalFiles, successful, failed, results }
+ */
+export async function getRenameStatus(jobId) {
+    try {
+        const response = await apiClient.get(`/rename-status/${jobId}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error (getRenameStatus):', error);
+        throw new Error(error.response?.data?.error || 'Failed to get rename status');
     }
 }
 

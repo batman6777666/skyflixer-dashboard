@@ -56,57 +56,87 @@ router.get('/fetch-files', async (req, res) => {
     }
 });
 
+// ── In-memory rename job store ─────────────────────────────────
+const renameJobs = new Map();
+
 /**
  * POST /api/rename-batch
- * Batch rename files across platforms
+ * Starts rename in background, responds IMMEDIATELY with jobId.
+ * Frontend polls GET /api/rename-status/:jobId for progress.
  */
 router.post('/rename-batch', async (req, res) => {
-    try {
-        const { files, newNames } = req.body;
+    const { files, newNames } = req.body;
 
-        if (!files || !newNames || files.length !== newNames.length) {
-            return res.status(400).json({
-                success: false,
-                error: 'Invalid request: files and newNames arrays must have the same length'
-            });
-        }
-
-        console.log(`\n📡 API: Batch rename request for ${files.length} files`);
-
-        const apiKeys = {
-            rpmshare: [
-                process.env.RPMSHARE_API_KEY_1,
-                process.env.RPMSHARE_API_KEY_2
-            ],
-            streamp2p: [
-                process.env.STREAMP2P_API_KEY_1,
-                process.env.STREAMP2P_API_KEY_2
-            ],
-            seekstreaming: [
-                process.env.SEEKSTREAMING_API_KEY_1,
-                process.env.SEEKSTREAMING_API_KEY_2
-            ],
-            upnshare: [
-                process.env.UPNSHARE_API_KEY_1,
-                process.env.UPNSHARE_API_KEY_2
-            ]
-        };
-
-        // Process batch rename (results tracked in sessionStats automatically)
-        const results = await processBatchRename(files, newNames, apiKeys);
-
-        res.json({
-            success: true,
-            results: results
-        });
-
-    } catch (error) {
-        console.error('❌ API Error:', error.message);
-        res.status(500).json({
+    if (!files || !newNames || files.length !== newNames.length) {
+        return res.status(400).json({
             success: false,
-            error: error.message
+            error: 'Invalid request: files and newNames arrays must have the same length'
         });
     }
+
+    console.log(`\n📡 API: Batch rename request for ${files.length} files`);
+
+    const apiKeys = {
+        rpmshare: [process.env.RPMSHARE_API_KEY_1, process.env.RPMSHARE_API_KEY_2],
+        streamp2p: [process.env.STREAMP2P_API_KEY_1, process.env.STREAMP2P_API_KEY_2],
+        seekstreaming: [process.env.SEEKSTREAMING_API_KEY_1, process.env.SEEKSTREAMING_API_KEY_2],
+        upnshare: [process.env.UPNSHARE_API_KEY_1, process.env.UPNSHARE_API_KEY_2]
+    };
+
+    // Create job
+    const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+    renameJobs.set(jobId, {
+        status: 'running',
+        currentFile: 0,
+        totalFiles: files.length,
+        successful: 0,
+        failed: 0,
+        results: null,
+        error: null,
+        startedAt: new Date().toISOString()
+    });
+
+    // ✅ Respond immediately — no more timeout errors
+    res.json({ success: true, jobId, totalFiles: files.length });
+
+    // Run rename in background (does NOT block the response)
+    processBatchRename(files, newNames, apiKeys, (progress) => {
+        const job = renameJobs.get(jobId);
+        if (job) {
+            job.currentFile = progress.currentFile;
+            job.totalFiles = progress.totalFiles;
+            job.currentBatch = progress.currentBatch;
+            job.totalBatches = progress.totalBatches;
+        }
+    })
+        .then(results => {
+            const job = renameJobs.get(jobId);
+            if (job) {
+                job.status = 'completed';
+                job.results = results;
+                job.successful = results.successful;
+                job.failed = results.failed;
+                job.currentFile = results.total;
+            }
+            console.log(`✅ Job ${jobId} complete: ${results.successful} ok, ${results.failed} failed`);
+            // Clean up after 1 hour
+            setTimeout(() => renameJobs.delete(jobId), 3600000);
+        })
+        .catch(err => {
+            const job = renameJobs.get(jobId);
+            if (job) { job.status = 'error'; job.error = err.message; }
+            console.error(`❌ Job ${jobId} failed:`, err.message);
+        });
+});
+
+/**
+ * GET /api/rename-status/:jobId
+ * Returns current job progress/result for polling.
+ */
+router.get('/rename-status/:jobId', (req, res) => {
+    const job = renameJobs.get(req.params.jobId);
+    if (!job) return res.status(404).json({ success: false, error: 'Job not found or expired' });
+    res.json({ success: true, ...job });
 });
 
 /**

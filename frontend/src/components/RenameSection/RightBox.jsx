@@ -1,19 +1,28 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
-import { renameBatch } from '../../services/api';
+import { renameBatch, getRenameStatus } from '../../services/api';
 import Button from '../common/Button';
 import { toast } from 'react-toastify';
 
-export default function RightBox() {
-    const { files, renameProgress, updateRenameProgress, fetchStats } = useApp();
-    const [newNames, setNewNames] = useState([]);
+const PAGE_SIZE = 20;
 
-    // Initialize new names when files change
+export default function RightBox() {
+    const { files, renameProgress, updateRenameProgress, fetchStats, currentPage, setCurrentPage } = useApp();
+    const [newNames, setNewNames] = useState([]);
+    const pollRef = useRef(null);
+
+    // All files
+    const allFiles = files?.original || [];
+    const pageFiles = allFiles.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+    const totalPages = Math.ceil(allFiles.length / PAGE_SIZE);
+
+    // Reset names whenever page or files change
     useEffect(() => {
-        if (files?.original?.length > 0) {
-            setNewNames(files.original.map(f => f?.filename || ''));
-        }
-    }, [files.original]);
+        setNewNames(pageFiles.map(f => f?.filename || ''));
+    }, [currentPage, files.original]);
+
+    // Cleanup polling on unmount
+    useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
     const handleNameChange = (index, value) => {
         const updated = [...newNames];
@@ -22,71 +31,74 @@ export default function RightBox() {
     };
 
     const handleGoRename = async () => {
-        // Validation
         const emptyNames = newNames.filter(name => !name || name.trim() === '');
         if (emptyNames.length > 0) {
             toast.error('❌ Please fill in all rename fields');
             return;
         }
 
-        updateRenameProgress({
-            isProcessing: true,
-            status: 'processing',
-            currentFile: 0,
-            totalFiles: files.original.length
-        });
+        updateRenameProgress({ isProcessing: true, status: 'processing', currentFile: 0, totalFiles: pageFiles.length });
 
         try {
-            const response = await renameBatch(files.original, newNames);
+            // Start job — responds instantly with jobId
+            const { jobId, totalFiles } = await renameBatch(pageFiles, newNames);
+            toast.info(`🚀 Renaming ${totalFiles} files on page ${currentPage + 1}…`);
 
-            if (response.success) {
-                updateRenameProgress({
-                    isProcessing: false,
-                    status: 'completed'
-                });
+            // Poll every 2 seconds for progress
+            pollRef.current = setInterval(async () => {
+                try {
+                    const job = await getRenameStatus(jobId);
 
-                toast.success(
-                    `✅ Rename complete! ${response.results.successful} successful, ${response.results.failed} failed`
-                );
+                    updateRenameProgress({
+                        isProcessing: job.status === 'running',
+                        status: job.status,
+                        currentFile: job.currentFile || 0,
+                        totalFiles: job.totalFiles || totalFiles
+                    });
 
-                // Refresh stats
-                await fetchStats();
-            }
+                    if (job.status === 'completed') {
+                        clearInterval(pollRef.current);
+                        toast.success(`✅ Page ${currentPage + 1} done! ${job.successful} renamed, ${job.failed} failed`);
+                        await fetchStats();
+                    } else if (job.status === 'error') {
+                        clearInterval(pollRef.current);
+                        toast.error(`❌ Rename failed: ${job.error}`);
+                        updateRenameProgress({ isProcessing: false, status: 'error' });
+                    }
+                } catch (pollErr) {
+                    clearInterval(pollRef.current);
+                    toast.error(`❌ Lost connection to rename job`);
+                    updateRenameProgress({ isProcessing: false, status: 'error' });
+                }
+            }, 2000);
+
         } catch (error) {
             toast.error(`❌ ${error.message}`);
-            updateRenameProgress({
-                isProcessing: false,
-                status: 'error'
-            });
+            updateRenameProgress({ isProcessing: false, status: 'error' });
         }
-    };
-
-    const handleClearAll = () => {
-        const safeOriginal = files?.original || [];
-        setNewNames(safeOriginal.map(f => f.filename));
-        toast.info('🔄 All fields reset to original names');
     };
 
     const handlePaste = async () => {
         try {
             const text = await navigator.clipboard.readText();
             const lines = text.split('\n').filter(line => line.trim());
-
             const updated = [...newNames];
             lines.forEach((line, index) => {
-                if (index < updated.length) {
-                    updated[index] = line.trim();
-                }
+                if (index < updated.length) updated[index] = line.trim();
             });
-
             setNewNames(updated);
             toast.success('📋 Pasted names successfully!');
-        } catch (error) {
+        } catch {
             toast.error('❌ Failed to paste from clipboard');
         }
     };
 
-    const hasFiles = files?.original && files.original.length > 0;
+    const handleClearAll = () => {
+        setNewNames(pageFiles.map(f => f.filename));
+        toast.info('🔄 Reset to original names');
+    };
+
+    const hasFiles = pageFiles.length > 0;
 
     return (
         <div className="flex-1">
@@ -97,7 +109,7 @@ export default function RightBox() {
                         ✏️ Renamed Files
                     </h2>
 
-                    {/* Action Buttons — wrap on mobile so they don't disappear */}
+                    {/* Action Buttons */}
                     <div className="flex flex-wrap gap-2 sm:gap-3 mb-4">
                         <Button
                             onClick={handleGoRename}
@@ -110,23 +122,11 @@ export default function RightBox() {
                             Go Rename
                         </Button>
 
-                        <Button
-                            onClick={handlePaste}
-                            variant="purple"
-                            disabled={!hasFiles}
-                            icon="📋"
-                            className="min-w-[80px]"
-                        >
+                        <Button onClick={handlePaste} variant="purple" disabled={!hasFiles} icon="📋" className="min-w-[80px]">
                             Paste
                         </Button>
 
-                        <Button
-                            onClick={handleClearAll}
-                            variant="purple"
-                            disabled={!hasFiles}
-                            icon="🔄"
-                            className="min-w-[80px]"
-                        >
+                        <Button onClick={handleClearAll} variant="purple" disabled={!hasFiles} icon="🔄" className="min-w-[80px]">
                             Reset
                         </Button>
                     </div>
@@ -141,28 +141,33 @@ export default function RightBox() {
                             <div className="w-full bg-primary-bg rounded-full h-2">
                                 <div
                                     className="bg-gradient-to-r from-accent-green to-accent-purple h-2 rounded-full transition-all duration-300"
-                                    style={{
-                                        width: `${(renameProgress.currentFile / renameProgress.totalFiles) * 100}%`
-                                    }}
-                                ></div>
+                                    style={{ width: `${(renameProgress.currentFile / renameProgress.totalFiles) * 100}%` }}
+                                />
                             </div>
+                        </div>
+                    )}
+
+                    {/* Page info */}
+                    {hasFiles && (
+                        <div className="text-text-secondary text-sm mb-3">
+                            Page {currentPage + 1} of {totalPages} — {pageFiles.length} files
                         </div>
                     )}
                 </div>
 
                 {/* Input List */}
-                <div className="max-h-[600px] overflow-y-auto space-y-2">
+                <div className="max-h-[520px] overflow-y-auto space-y-2">
                     {!hasFiles ? (
                         <div className="text-center py-20 text-text-secondary">
                             <div className="text-6xl mb-4">✏️</div>
                             <p>Fetch files to start renaming</p>
                         </div>
                     ) : (
-                        (newNames || []).map((name, index) => (
+                        newNames.map((name, index) => (
                             <div key={index} className="relative">
                                 <div className="flex items-center gap-2">
                                     <span className="text-text-secondary text-sm font-mono w-10">
-                                        {index + 1}.
+                                        {currentPage * PAGE_SIZE + index + 1}.
                                     </span>
                                     <input
                                         type="text"
@@ -180,6 +185,35 @@ export default function RightBox() {
                         ))
                     )}
                 </div>
+
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                    <div className="flex items-center justify-between mt-4 pt-4 border-t border-primary-border">
+                        <Button
+                            onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
+                            variant="purple"
+                            disabled={currentPage === 0 || renameProgress.isProcessing}
+                            icon="←"
+                            className="min-w-[100px]"
+                        >
+                            Prev 20
+                        </Button>
+
+                        <span className="text-text-secondary text-sm font-mono">
+                            {currentPage + 1} / {totalPages}
+                        </span>
+
+                        <Button
+                            onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))}
+                            variant="purple"
+                            disabled={currentPage >= totalPages - 1 || renameProgress.isProcessing}
+                            icon="→"
+                            className="min-w-[100px]"
+                        >
+                            Next 20
+                        </Button>
+                    </div>
+                )}
             </div>
         </div>
     );

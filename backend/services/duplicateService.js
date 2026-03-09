@@ -1,16 +1,13 @@
 /**
- * duplicateService.js — Correct Logic
+ * duplicateService.js — Smart Logic
  * ─────────────────────────────────────────────────────────────
- * Each platform has ONE account (KEY1).  KEY2 is the same account.
- * 
- * DUPLICATE (within a platform):
- *   Same filename appears MORE THAN ONCE on the same platform.
- *   Identified by exact name (lowercase + trim + accent-normalized).
- *   Keep 1, delete the rest.
+ * Uses the same titleYearKey() normalization as fileService so that:
+ *   • Duplicates: "Movie 2024 Hindi.mkv" and "Movie (2024) {Hindi} SKYFLIXER"
+ *     on the same platform are correctly found as duplicates.
+ *     The SKYFLIXER version is always KEPT, the old one deleted.
  *
- * MISSING (across platforms):
- *   A file that exists on ≥2 platforms but is NOT on ≥2 other platforms.
- *   (User requirement: only show if truly unbalanced — on some but not most)
+ *   • Missing: same title+year on all 4 platforms matches even if
+ *     one platform has the old name and another has the SKYFLIXER name.
  */
 
 import RPMShareAPI from '../api/RPMShareAPI.js';
@@ -20,53 +17,36 @@ import UPnShareAPI from '../api/UPnShareAPI.js';
 
 const PLATFORMS = ['streamp2p', 'rpmshare', 'seekstreaming', 'upnshare'];
 
-// ─── Helpers ──────────────────────────────────────────────
-
+// ─── Canonical key shared by all 3 functions ──────────────────
 /**
- * nameKey — strict, used for DUPLICATE detection within a platform.
- * Lowercase + trim + remove accents only.
+ * Extracts "title (year)" as the reliable canonical identifier.
+ * Works with raw platform filenames AND renamed SKYFLIXER filenames.
  */
-function nameKey(filename) {
-    return (filename || '')
-        .trim()
-        .toLowerCase()
+function titleYearKey(filename) {
+    const name = (filename || '')
         .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '');
-}
+        .replace(/[\u0300-\u036f]/g, '')      // strip accents
+        .replace(/\.(mkv|mp4|avi|mov|wmv)$/i, '') // strip extension
+        .replace(/\./g, ' ')                   // dots → spaces
+        .replace(/\{[^}]*\}/g, '')             // strip {lang tags}
+        .replace(/\[[^\]]*\]/g, '')            // strip [source tags]
+        .replace(/:/g, '')
+        .replace(/\b(1080p|720p|2160p|4k|bluray|blu ray|web dl|webrip|hdcam|hdrip|esub|msub|dubbed|hindi|english|tamil|telugu|kannada|malayalam|korean|chinese|french|spanish|arabic|malay|thai|japanese|multi|skyflixer|bollyflix|moviesmod|msubs)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
 
-/**
- * missingKey — looser, used for MISSING FILE detection across platforms.
- * Also strips:
- *   • file extensions (.mkv, .mp4, .avi, .mov)
- *   • parenthetical qualifiers inside language tags like (Clear), (Dubbed), (HQ)
- *   • collapses multiple spaces
- *
- * Examples:
- *   "Shambhala (2025) {Hindi (Clear)-Telugu} SKYFLIXER"
- *     → "shambhala (2025) {hindi-telugu} skyflixer"
- *   "Santhana Prapthirasthu (2025) {Hindi-Telugu} SKYFLIXER.mkv"
- *     → "santhana prapthirasthu (2025) {hindi-telugu} skyflixer"
- */
-function missingKey(filename) {
-    return (filename || '')
-        .trim()
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')           // remove accents
-        .replace(/\.(mkv|mp4|avi|mov|wmv)$/i, '')  // strip video extension
-        .replace(/\s*\(clear\)\s*/gi, '')           // strip (Clear)
-        .replace(/\s*\(dubbed\)\s*/gi, '')          // strip (Dubbed)
-        .replace(/\s*\(hq\)\s*/gi, '')              // strip (HQ)
-        .replace(/\s*\(cam\)\s*/gi, '')             // strip (Cam)
-        .replace(/\s+/g, ' ')                       // collapse spaces
-        .trim();
+    const yearMatch = name.match(/^(.+?)\s*\((\d{4})\)/);
+    if (yearMatch) {
+        return `${yearMatch[1].trim()} (${yearMatch[2]})`;
+    }
+    return name;
 }
 
 function getId(file) {
     return file.fileId || file.id;
 }
 
-/** Create API clients using only KEY1 per platform */
 function getClients(apiKeys) {
     return {
         streamp2p: new StreamP2PAPI(apiKeys.streamp2p[0]),
@@ -76,9 +56,6 @@ function getClients(apiKeys) {
     };
 }
 
-/** Fetch files from all 4 platforms in parallel.
- *  Each platform's listAllFiles() fetches pages SEQUENTIALLY internally,
- *  so this is safe from rate-limiting while staying fast (~3s total). */
 async function fetchRaw(apiKeys) {
     const clients = getClients(apiKeys);
     const results = await Promise.allSettled(
@@ -96,10 +73,15 @@ async function fetchRaw(apiKeys) {
 
 
 // ══════════════════════════════════════════════════════════════
-// 1. FIND DUPLICATES — within each platform (KEY1 account)
+// 1. FIND DUPLICATES — within each platform
 // ══════════════════════════════════════════════════════════════
+/**
+ * Groups files by titleYearKey per platform.
+ * If > 1 file maps to the same key, it's a duplicate set.
+ * Keeps the SKYFLIXER-named file; marks the rest for deletion.
+ */
 export async function findDuplicates(apiKeys) {
-    console.log('\n🔍 FIND DUPLICATES: scanning each platform for same-named files...');
+    console.log('\n🔍 FIND DUPLICATES: scanning each platform for same-content files...');
     const { raw } = await fetchRaw(apiKeys);
 
     const result = {};
@@ -108,27 +90,26 @@ export async function findDuplicates(apiKeys) {
     for (const platform of PLATFORMS) {
         const files = raw[platform];
 
-        // Group files by normalized name
-        const nameMap = new Map(); // nameKey → [{ fileId, name }, ...]
+        // Group files by canonical title+year key
+        const keyMap = new Map(); // titleYearKey → [{ fileId, name }, ...]
         for (const file of files) {
-            const key = nameKey(file.name);
-            if (!nameMap.has(key)) nameMap.set(key, []);
-            nameMap.get(key).push({ fileId: getId(file), name: file.name });
+            const key = titleYearKey(file.name);
+            if (!keyMap.has(key)) keyMap.set(key, []);
+            keyMap.get(key).push({ fileId: getId(file), name: file.name });
         }
 
         const platformDups = [];
-        for (const [key, group] of nameMap.entries()) {
+        for (const [key, group] of keyMap.entries()) {
             if (group.length > 1) {
-                const keep = group[0];
-                const remove = group.slice(1);
-                platformDups.push({
-                    normalizedName: key,
-                    count: group.length,
-                    keep,
-                    remove
-                });
+                // Prefer the SKYFLIXER-named file as "keep"
+                const skyflixerIdx = group.findIndex(f => f.name.toLowerCase().includes('skyflixer'));
+                const keepIdx = skyflixerIdx >= 0 ? skyflixerIdx : 0;
+                const keep = group[keepIdx];
+                const remove = group.filter((_, i) => i !== keepIdx);
+
+                platformDups.push({ normalizedName: key, count: group.length, keep, remove });
                 totalDuplicates += remove.length;
-                console.log(`  [${platform}] DUP x${group.length}: "${keep.name}"`);
+                console.log(`  [${platform}] DUP x${group.length}: keep="${keep.name}"`);
             }
         }
 
@@ -149,8 +130,6 @@ export async function findDuplicates(apiKeys) {
 // ══════════════════════════════════════════════════════════════
 export async function deleteDuplicates(apiKeys) {
     console.log('\n🗑️  DELETE DUPLICATES — single scan then delete...');
-
-    // Single scan — reuse the same data for both finding and deleting
     const { raw, clients } = await fetchRaw(apiKeys);
 
     let totalDeleted = 0;
@@ -160,20 +139,20 @@ export async function deleteDuplicates(apiKeys) {
     for (const platform of PLATFORMS) {
         const files = raw[platform];
 
-        // Group by normalized name to find duplicates
-        const nameMap = new Map();
+        const keyMap = new Map();
         for (const file of files) {
-            const key = nameKey(file.name);
-            if (!nameMap.has(key)) nameMap.set(key, []);
-            nameMap.get(key).push({ fileId: getId(file), name: file.name });
+            const key = titleYearKey(file.name);
+            if (!keyMap.has(key)) keyMap.set(key, []);
+            keyMap.get(key).push({ fileId: getId(file), name: file.name });
         }
 
         const toDelete = [];
-        for (const [, group] of nameMap.entries()) {
+        for (const [, group] of keyMap.entries()) {
             if (group.length > 1) {
-                // Keep first, delete the rest
-                for (const extra of group.slice(1)) {
-                    toDelete.push({ ...extra, platform });
+                const skyflixerIdx = group.findIndex(f => f.name.toLowerCase().includes('skyflixer'));
+                const keepIdx = skyflixerIdx >= 0 ? skyflixerIdx : 0;
+                for (let i = 0; i < group.length; i++) {
+                    if (i !== keepIdx) toDelete.push({ ...group[i], platform });
                 }
             }
         }
@@ -195,11 +174,9 @@ export async function deleteDuplicates(apiKeys) {
                 console.log(`    ✅ Deleted: "${entry.name}" (${entry.fileId})`);
             } else {
                 totalFailed++;
-                const errMsg = res?.error || 'Unknown error';
-                results.push({ success: false, platform, fileId: entry.fileId, name: entry.name, error: errMsg });
-                console.log(`    ❌ Failed: "${entry.name}" — ${errMsg}`);
+                results.push({ success: false, platform, fileId: entry.fileId, name: entry.name, error: res?.error || 'Unknown error' });
+                console.log(`    ❌ Failed: "${entry.name}"`);
             }
-            // Small delay between deletes to avoid rate limiting
             await new Promise(r => setTimeout(r, 300));
         }
     }
@@ -212,64 +189,71 @@ export async function deleteDuplicates(apiKeys) {
 // 3. FIND MISSING FILES — across platforms
 // ══════════════════════════════════════════════════════════════
 /**
- * MISSING = a file exists on some platforms but NOT all 4.
- *
- * Uses missingKey() for comparison so minor naming differences
- * (e.g. .mkv extension, "(Clear)" audio qualifier) don't cause false mismatches.
- *
- * Shows ALL missing cases — clearly stating which platform each file is missing from.
+ * Uses the same titleYearKey() so that a file present on all 4 platforms
+ * is NEVER reported as missing, even if the name format differs
+ * (e.g. one platform has SKYFLIXER name, another has the original name).
  */
 export async function findMissingFiles(apiKeys) {
     console.log('\n📋 FIND MISSING FILES: comparing across all platforms...');
     const { raw } = await fetchRaw(apiKeys);
 
     const platformCounts = {};
-    const nameSets = {};
+    const nameSets = {};     // platform → Map<titleYearKey, bestDisplayName>
+    const uniqueCounts = {}; // platform → unique title count
 
     for (const platform of PLATFORMS) {
         platformCounts[platform] = raw[platform].length;
+        nameSets[platform] = new Map();
 
-        nameSets[platform] = new Map(); // missingKey → original filename
         for (const file of raw[platform]) {
-            const key = missingKey(file.name);
-            if (!nameSets[platform].has(key)) {
+            const key = titleYearKey(file.name);
+            const existing = nameSets[platform].get(key);
+            // Prefer SKYFLIXER-named version as display name
+            if (!existing || file.name.toLowerCase().includes('skyflixer')) {
                 nameSets[platform].set(key, file.name);
             }
         }
-        console.log(`  [${platform}] ${raw[platform].length} files → ${nameSets[platform].size} unique (after normalization)`);
+        uniqueCounts[platform] = nameSets[platform].size;
+        console.log(`  [${platform}] ${raw[platform].length} files → ${nameSets[platform].size} unique titles`);
     }
 
-    // Master union of all unique filenames across all platforms
-    const master = new Map(); // missingKey → best display name (from first platform that has it)
+    // Master union of all unique titles across all platforms
+    const master = new Map();
     for (const platform of PLATFORMS) {
         for (const [key, name] of nameSets[platform]) {
             if (!master.has(key)) master.set(key, name);
+            // Prefer SKYFLIXER name in master
+            else if (name.toLowerCase().includes('skyflixer')) master.set(key, name);
         }
     }
 
-    console.log(`  Total unique files across all platforms: ${master.size}`);
+    console.log(`  Total unique titles across all platforms: ${master.size}`);
 
     const missingFiles = [];
+    const syncedCount = { all4: 0 };
 
     for (const [key, filename] of master) {
         const presentIn = PLATFORMS.filter(p => nameSets[p].has(key));
         const missingIn = PLATFORMS.filter(p => !nameSets[p].has(key));
 
-        // Report if missing from at least 1 platform (present on at least 1)
-        if (missingIn.length > 0 && presentIn.length > 0) {
+        if (missingIn.length === 0) {
+            syncedCount.all4++;
+        } else if (presentIn.length > 0) {
             missingFiles.push({ filename, presentIn, missingIn });
         }
     }
 
     missingFiles.sort((a, b) => a.filename.localeCompare(b.filename));
 
-    console.log(`\n✅ Missing file report: ${missingFiles.length} file(s) missing from at least 1 platform`);
-    for (const m of missingFiles) {
-        console.log(`   "${m.filename}"`);
-        console.log(`     ✅ Present: [${m.presentIn.join(', ')}]`);
-        console.log(`     ❌ Missing: [${m.missingIn.join(', ')}]`);
-    }
+    console.log(`\n✅ In sync on all 4 platforms: ${syncedCount.all4}`);
+    console.log(`⚠️  Missing from at least 1 platform: ${missingFiles.length}`);
 
-    return { missingFiles, totalMissing: missingFiles.length, platformCounts };
+    return {
+        missingFiles,
+        totalMissing: missingFiles.length,
+        platformCounts,
+        uniqueCounts,
+        syncedCount: syncedCount.all4,
+        totalUnique: master.size
+    };
 }
-

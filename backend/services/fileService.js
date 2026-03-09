@@ -79,66 +79,43 @@ export async function fetchFilesFromAllPlatforms(apiKeys) {
 }
 
 /**
- * Normalize filename for smart grouping across platforms
- * Extracts show name + season/episode to create a common key
- * @param {string} filename - Original filename
- * @returns {string} - Normalized grouping key
+ * Canonical key: extract 'title (year)' from any filename format.
+ * Works for both raw platform filenames and renamed SKYFLIXER filenames.
+ * Examples:
+ *   "28 Weeks Later (2007) Hindi 1080p BluRay.mkv"  → "28 weeks later (2007)"
+ *   "28 Weeks Later (2007) {English} SKYFLIXER"      → "28 weeks later (2007)"
+ *   "The.Dark.Knight.2008.1080p.BluRay.mkv"          → "the dark knight (2008)"
  */
 function normalizeFilename(filename) {
-    // Remove file extension
-    let name = filename.replace(/\.(mkv|mp4|avi|mov|wmv)$/i, '');
+    let name = (filename || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')    // strip accents
+        .replace(/\.(mkv|mp4|avi|mov|wmv)$/i, '')  // strip extension
+        .replace(/\./g, ' ')               // dots → spaces (UPN style)
+        .replace(/\{[^}]*\}/g, '')         // strip {Hindi-English} language tags
+        .replace(/\[[^\]]*\]/g, '')        // strip [BollyFlix] source tags
+        .replace(/:/g, '')                 // strip colons
+        .replace(/\b(1080p|720p|2160p|4k|bluray|blu ray|web dl|webrip|hdcam|hdrip|esub|msub|dubbed|hindi|english|tamil|telugu|kannada|malayalam|korean|chinese|french|spanish|arabic|malay|thai|japanese|multi|skyflixer|bollyflix|moviesmod|bollyflix|esub|msubs|s01|s02|s03)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
 
-    // Remove quality indicators, "SKYFLIXER", and metadata
-    const removePatterns = [
-        /\s*SKYFLIXER\s*/gi,
-        /\s*1080P\s*/gi,
-        /\s*720P\s*/gi,
-        /\s*2160P\s*/gi,
-        /\s*Hindi\s*/gi,
-        /\s*English\s*/gi,
-        /\s*Msubs\s*/gi,
-        /\s*MoviesMod\.plus\s*/gi,
-        /\s*\d+GB\s*/gi
-    ];
-
-    for (const pattern of removePatterns) {
-        name = name.replace(pattern, ' ');
+    // Try to extract "Title (Year)" — the most reliable canonical key
+    const yearMatch = name.match(/^(.+?)\s*\((\d{4})\)/);
+    if (yearMatch) {
+        const title = yearMatch[1].replace(/\s+/g, ' ').trim();
+        return `${title} (${yearMatch[2]})`;
     }
 
-    // Replace dots with spaces (UPN uses dots, others use spaces)
-    name = name.replace(/\./g, ' ');
-
-    // Replace colons with nothing (RPM uses "It: Welcome", others "It Welcome")
-    name = name.replace(/:/g, '');
-
-    // Normalize multiple spaces to single space
-    name = name.replace(/\s+/g, ' ').trim();
-
-    // Convert to lowercase for case-insensitive matching
-    name = name.toLowerCase();
-
-    // Try to extract episode identifier (S01E01, etc.) and show name
-    const episodeMatch = name.match(/^(.+?)\s+(s\d+e\d+)/i);
-    if (episodeMatch) {
-        const showName = episodeMatch[1].trim();
-        const episode = episodeMatch[2].toLowerCase();
-        return `${showName} ${episode}`;
-    }
-
-    // If no episode pattern, return the cleaned name
     return name;
 }
 
 /**
- * Match files across platforms and create unique list
- * @param {Array} rpmFiles - Files from RPMShare
- * @param {Array} streamFiles - Files from StreamP2P
- * @param {Array} seekFiles - Files from SeekStreaming
- * @param {Array} upnFiles - Files from UPnShare
- * @returns {Array} - Unique files with platform information
+ * Match files across platforms and create unique list.
+ * Prefers SKYFLIXER-named files for the display filename.
  */
 function matchFilesAcrossPlatforms(rpmFiles, streamFiles, seekFiles, upnFiles) {
-    const fileMap = new Map();
+    const fileMap = new Map(); // key → { filename, platforms, size, created_at }
 
     const allPlatformFiles = [
         { files: rpmFiles, platform: 'rpmshare' },
@@ -150,10 +127,10 @@ function matchFilesAcrossPlatforms(rpmFiles, streamFiles, seekFiles, upnFiles) {
     allPlatformFiles.forEach(({ files, platform }) => {
         files.forEach(file => {
             const originalName = file.name;
-            const normalizedKey = normalizeFilename(originalName);
+            const key = normalizeFilename(originalName);
 
-            if (!fileMap.has(normalizedKey)) {
-                fileMap.set(normalizedKey, {
+            if (!fileMap.has(key)) {
+                fileMap.set(key, {
                     filename: originalName,
                     platforms: [],
                     created_at: file.created_at,
@@ -161,10 +138,18 @@ function matchFilesAcrossPlatforms(rpmFiles, streamFiles, seekFiles, upnFiles) {
                 });
             }
 
-            fileMap.get(normalizedKey).platforms.push({
-                platform: platform,
-                fileId: file.fileId
-            });
+            const entry = fileMap.get(key);
+
+            // Prefer SKYFLIXER-named file as display name (it's the clean version)
+            if (originalName.toLowerCase().includes('skyflixer')) {
+                entry.filename = originalName;
+            }
+
+            // Avoid adding the same platform twice (e.g. original + skyflixer both on same platform)
+            const alreadyAdded = entry.platforms.find(p => p.platform === platform);
+            if (!alreadyAdded) {
+                entry.platforms.push({ platform, fileId: file.fileId });
+            }
         });
     });
 

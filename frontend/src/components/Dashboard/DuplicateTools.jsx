@@ -130,31 +130,22 @@ export default function DuplicateTools() {
     const [modal, setModal] = useState(null);
     const countRef = useRef(null);
 
-    /* Run API + 10-second countdown together. Scan starts immediately.
-       Results appear exactly when both the 10s wait AND the API are done.
-       Minimum displayed number is 1 — never shows 0. */
+    /* Run API scan. Countdown shows live elapsed time.
+       Results appear as soon as API responds — no forced wait. */
     async function runWithCountdown(key, label, apiFn) {
         setLoading(key);
-        setCountdown(10);
+        setCountdown(1);
 
-        let n = 10;
+        let n = 1;
         countRef.current = setInterval(() => {
-            n--;
-            if (n >= 1) {
-                setCountdown(n); // 10 → 9 → 8 … → 1
-            } else {
-                // Stay at 1 until Promise.all resolves — never shows 0
-                clearInterval(countRef.current);
-            }
+            n++;
+            setCountdown(n);
         }, 1000);
 
         try {
-            const [data] = await Promise.all([
-                apiFn(),                                  // deep scan (starts immediately)
-                new Promise(r => setTimeout(r, 10000))   // always wait full 10 s
-            ]);
+            const data = await apiFn(); // ← no artificial delay
             clearInterval(countRef.current);
-            setCountdown(null); // hide countdown, show results
+            setCountdown(null);
             return data;
         } catch (err) {
             clearInterval(countRef.current);
@@ -297,21 +288,46 @@ export default function DuplicateTools() {
 
     // ── Modal: Missing Files ───────────────────────────────
     function renderMissingModal(data) {
-        const { missingFiles, totalMissing, platformCounts } = data;
+        const { missingFiles, totalMissing, platformCounts, uniqueCounts, syncedCount, totalUnique } = data;
         return (
             <>
-                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '18px' }}>
+                {/* Per-platform counts — raw files + unique titles */}
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
                     {Object.entries(platformCounts).map(([platform, count]) => (
                         <div key={platform} style={{ flex: '1 1 100px', background: 'var(--color-primary-bg)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '10px 16px', textAlign: 'center' }}>
                             <PlatformBadge platform={platform} />
                             <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--color-text-primary)', marginTop: '8px' }}>{count}</div>
-                            <div style={{ fontSize: '10px', color: 'var(--color-text-secondary)' }}>total files</div>
+                            <div style={{ fontSize: '10px', color: 'var(--color-text-secondary)' }}>raw files</div>
+                            {uniqueCounts && (
+                                <div style={{ fontSize: '12px', fontWeight: 700, color: '#6C63FF', marginTop: '4px' }}>
+                                    {uniqueCounts[platform]} unique
+                                </div>
+                            )}
                         </div>
                     ))}
                 </div>
+
+                {/* Sync summary */}
+                {totalUnique != null && (
+                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                        <div style={{ flex: '1 1 140px', background: 'rgba(0,217,163,0.1)', border: '1px solid #00D9A344', borderRadius: '8px', padding: '12px 16px', textAlign: 'center' }}>
+                            <div style={{ fontSize: '24px', fontWeight: 800, color: '#00D9A3' }}>{syncedCount}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>✅ On all 4 platforms</div>
+                        </div>
+                        <div style={{ flex: '1 1 140px', background: 'rgba(255,107,107,0.1)', border: '1px solid #FF6B6B44', borderRadius: '8px', padding: '12px 16px', textAlign: 'center' }}>
+                            <div style={{ fontSize: '24px', fontWeight: 800, color: '#FF6B6B' }}>{totalMissing}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>⚠️ Missing from ≥1 platform</div>
+                        </div>
+                        <div style={{ flex: '1 1 140px', background: 'rgba(108,99,255,0.1)', border: '1px solid #6C63FF44', borderRadius: '8px', padding: '12px 16px', textAlign: 'center' }}>
+                            <div style={{ fontSize: '24px', fontWeight: 800, color: '#6C63FF' }}>{totalUnique}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>📁 Total unique titles</div>
+                        </div>
+                    </div>
+                )}
+
                 <SummaryBanner ok={totalMissing === 0} text={totalMissing > 0
-                    ? `⚠️ ${totalMissing} file(s) are missing from at least 1 platform`
-                    : '✅ All 4 platforms have exactly the same files!'} />
+                    ? `⚠️ ${totalMissing} title(s) are missing from at least 1 platform`
+                    : '✅ All 4 platforms have exactly the same titles!'} />
                 {missingFiles.map((item, i) => (
                     <div key={i} style={{ background: 'var(--color-primary-bg)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '12px 14px', marginBottom: '8px' }}>
                         <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: '9px', wordBreak: 'break-word' }}>📁 {item.filename}</div>
@@ -372,9 +388,16 @@ export default function DuplicateTools() {
                     </button>
                 </div>
 
-                {/* 5-second countdown */}
+                {/* Elapsed-time display */}
                 {loading && countdown !== null && (
-                    <CountdownOverlay count={countdown} label={loadingLabel} />
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '16px' }}>
+                        <div style={{ fontSize: 'clamp(36px,10vw,60px)', fontWeight: 900, lineHeight: 1, background: 'linear-gradient(135deg,#6C63FF,#00D9A3)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
+                            {countdown}s
+                        </div>
+                        <div style={{ color: 'var(--color-text-secondary)', fontSize: '13px', fontWeight: 600 }}>
+                            {loadingLabel}
+                        </div>
+                    </div>
                 )}
             </div>
 

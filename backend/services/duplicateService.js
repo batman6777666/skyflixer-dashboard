@@ -19,28 +19,56 @@ const PLATFORMS = ['streamp2p', 'rpmshare', 'seekstreaming', 'upnshare'];
 
 // ─── Canonical key shared by all 3 functions ──────────────────
 /**
- * Extracts "title (year)" as the reliable canonical identifier.
- * Works with raw platform filenames AND renamed SKYFLIXER filenames.
+ * canonicalKey — Smart key extraction for both TV episodes and movies.
+ *
+ * TV episodes  → "showname|S01|E01"
+ *   Extracts everything BEFORE the SxxExx pattern as show name.
+ *   Ignores everything after (episode title, language tags, SKYFLIXER).
+ *   "A Dream of Splendor S01E01 Episode 1 SKYFLIXER"         → "a dream of splendor|S01|E01"
+ *   "A Dream of Splendor S01E01 Waiting For My Love {Chinese}"→ "a dream of splendor|S01|E01"
+ *
+ * Movies → "title (year)"
+ *   "The Dark Knight (2008) Hindi 1080p BluRay.mkv"          → "the dark knight (2008)"
+ *   "The Dark Knight (2008) {Hindi-English} SKYFLIXER"       → "the dark knight (2008)"
+ *
+ * Everything after SxxExx or (year) is stripped: language tags,
+ * quality specs, source tags, platform branding.
  */
-function titleYearKey(filename) {
-    const name = (filename || '')
+function canonicalKey(filename) {
+    const clean = (filename || '')
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')      // strip accents
         .replace(/\.(mkv|mp4|avi|mov|wmv)$/i, '') // strip extension
         .replace(/\./g, ' ')                   // dots → spaces
+        .replace(/:/g, '')                     // remove colons
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    // ── TV Episode: "ShowName S01E01 ..." ──
+    // Regex: ^(.*?) (S\d+)(E\d+)  – greedy show name, then season, then episode
+    const epMatch = clean.match(/^(.*?)\s+(S\d+)(E\d+)/i);
+    if (epMatch) {
+        const showName = epMatch[1].replace(/\s+/g, ' ').trim().toLowerCase();
+        const season   = epMatch[2].toUpperCase(); // e.g. S01
+        const episode  = epMatch[3].toUpperCase(); // e.g. E01
+        return `${showName}|${season}|${episode}`;
+    }
+
+    // ── Movie: extract "Title (Year)" ──
+    const stripped = clean
         .replace(/\{[^}]*\}/g, '')             // strip {lang tags}
         .replace(/\[[^\]]*\]/g, '')            // strip [source tags]
-        .replace(/:/g, '')
         .replace(/\b(1080p|720p|2160p|4k|bluray|blu ray|web dl|webrip|hdcam|hdrip|esub|msub|dubbed|hindi|english|tamil|telugu|kannada|malayalam|korean|chinese|french|spanish|arabic|malay|thai|japanese|multi|skyflixer|bollyflix|moviesmod|msubs)\b/gi, '')
         .replace(/\s+/g, ' ')
         .trim()
         .toLowerCase();
 
-    const yearMatch = name.match(/^(.+?)\s*\((\d{4})\)/);
+    const yearMatch = stripped.match(/^(.+?)\s*\((\d{4})\)/);
     if (yearMatch) {
         return `${yearMatch[1].trim()} (${yearMatch[2]})`;
     }
-    return name;
+
+    return stripped;
 }
 
 function getId(file) {
@@ -91,9 +119,9 @@ export async function findDuplicates(apiKeys) {
         const files = raw[platform];
 
         // Group files by canonical title+year key
-        const keyMap = new Map(); // titleYearKey → [{ fileId, name }, ...]
+        const keyMap = new Map(); // canonicalKey → [{ fileId, name }, ...]
         for (const file of files) {
-            const key = titleYearKey(file.name);
+            const key = canonicalKey(file.name);
             if (!keyMap.has(key)) keyMap.set(key, []);
             keyMap.get(key).push({ fileId: getId(file), name: file.name });
         }
@@ -141,7 +169,7 @@ export async function deleteDuplicates(apiKeys) {
 
         const keyMap = new Map();
         for (const file of files) {
-            const key = titleYearKey(file.name);
+            const key = canonicalKey(file.name);
             if (!keyMap.has(key)) keyMap.set(key, []);
             keyMap.get(key).push({ fileId: getId(file), name: file.name });
         }
@@ -189,16 +217,15 @@ export async function deleteDuplicates(apiKeys) {
 // 3. FIND MISSING FILES — across platforms
 // ══════════════════════════════════════════════════════════════
 /**
- * Uses the same titleYearKey() so that a file present on all 4 platforms
- * is NEVER reported as missing, even if the name format differs
- * (e.g. one platform has SKYFLIXER name, another has the original name).
+ * Uses canonicalKey() so TV episodes match even when episode titles differ,
+ * and movies match even when naming formats differ across platforms.
  */
 export async function findMissingFiles(apiKeys) {
     console.log('\n📋 FIND MISSING FILES: comparing across all platforms...');
     const { raw } = await fetchRaw(apiKeys);
 
     const platformCounts = {};
-    const nameSets = {};     // platform → Map<titleYearKey, bestDisplayName>
+    const nameSets = {};     // platform → Map<canonicalKey, bestDisplayName>
     const uniqueCounts = {}; // platform → unique title count
 
     for (const platform of PLATFORMS) {
@@ -206,7 +233,7 @@ export async function findMissingFiles(apiKeys) {
         nameSets[platform] = new Map();
 
         for (const file of raw[platform]) {
-            const key = titleYearKey(file.name);
+            const key = canonicalKey(file.name);
             const existing = nameSets[platform].get(key);
             // Prefer SKYFLIXER-named version as display name
             if (!existing || file.name.toLowerCase().includes('skyflixer')) {
@@ -222,7 +249,6 @@ export async function findMissingFiles(apiKeys) {
     for (const platform of PLATFORMS) {
         for (const [key, name] of nameSets[platform]) {
             if (!master.has(key)) master.set(key, name);
-            // Prefer SKYFLIXER name in master
             else if (name.toLowerCase().includes('skyflixer')) master.set(key, name);
         }
     }
@@ -232,14 +258,27 @@ export async function findMissingFiles(apiKeys) {
     const missingFiles = [];
     const syncedCount = { all4: 0 };
 
-    for (const [key, filename] of master) {
+    for (const [key, rawFilename] of master) {
         const presentIn = PLATFORMS.filter(p => nameSets[p].has(key));
         const missingIn = PLATFORMS.filter(p => !nameSets[p].has(key));
+
+        // Build clean display title from the key itself
+        // Episode key format: "showname|S01|E01" → "Show Name S01E01"
+        // Movie key format:   "title (year)"      → "Title (Year)" as-is
+        let displayTitle;
+        if (key.includes('|')) {
+            const [show, season, episode] = key.split('|');
+            // Title-case the show name
+            const showTitled = show.replace(/\b\w/g, c => c.toUpperCase());
+            displayTitle = `${showTitled} ${season}${episode}`;
+        } else {
+            displayTitle = rawFilename; // movie: use the actual (best) filename
+        }
 
         if (missingIn.length === 0) {
             syncedCount.all4++;
         } else if (presentIn.length > 0) {
-            missingFiles.push({ filename, presentIn, missingIn });
+            missingFiles.push({ filename: displayTitle, presentIn, missingIn });
         }
     }
 

@@ -79,35 +79,51 @@ export async function fetchFilesFromAllPlatforms(apiKeys) {
 }
 
 /**
- * Canonical key: extract 'title (year)' from any filename format.
- * Works for both raw platform filenames and renamed SKYFLIXER filenames.
- * Examples:
- *   "28 Weeks Later (2007) Hindi 1080p BluRay.mkv"  → "28 weeks later (2007)"
- *   "28 Weeks Later (2007) {English} SKYFLIXER"      → "28 weeks later (2007)"
- *   "The.Dark.Knight.2008.1080p.BluRay.mkv"          → "the dark knight (2008)"
+ * canonicalKey — Same logic as duplicateService so fetch + duplicate + missing all agree.
+ *
+ * TV episodes  → "showname|S01|E01"
+ *   "A Dream of Splendor S01E01 Episode 1 SKYFLIXER"          → "a dream of splendor|S01|E01"
+ *   "A Dream of Splendor S01E01 Waiting For My Love {Chinese}" → "a dream of splendor|S01|E01"
+ *   Both produce the SAME key → merged into one entry.
+ *
+ * Movies → "title (year)"
+ *   "The Dark Knight (2008) Hindi 1080p.mkv"                  → "the dark knight (2008)"
+ *   "The Dark Knight (2008) {Hindi-English} SKYFLIXER"        → "the dark knight (2008)"
  */
 function normalizeFilename(filename) {
-    let name = (filename || '')
+    const clean = (filename || '')
         .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')    // strip accents
-        .replace(/\.(mkv|mp4|avi|mov|wmv)$/i, '')  // strip extension
-        .replace(/\./g, ' ')               // dots → spaces (UPN style)
-        .replace(/\{[^}]*\}/g, '')         // strip {Hindi-English} language tags
-        .replace(/\[[^\]]*\]/g, '')        // strip [BollyFlix] source tags
-        .replace(/:/g, '')                 // strip colons
-        .replace(/\b(1080p|720p|2160p|4k|bluray|blu ray|web dl|webrip|hdcam|hdrip|esub|msub|dubbed|hindi|english|tamil|telugu|kannada|malayalam|korean|chinese|french|spanish|arabic|malay|thai|japanese|multi|skyflixer|bollyflix|moviesmod|bollyflix|esub|msubs|s01|s02|s03)\b/gi, '')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\.(mkv|mp4|avi|mov|wmv)$/i, '')
+        .replace(/\./g, ' ')
+        .replace(/:/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    // TV Episode: extract everything before SxxExx
+    const epMatch = clean.match(/^(.*?)\s+(S\d+)(E\d+)/i);
+    if (epMatch) {
+        const showName = epMatch[1].replace(/\s+/g, ' ').trim().toLowerCase();
+        const season   = epMatch[2].toUpperCase();
+        const episode  = epMatch[3].toUpperCase();
+        return `${showName}|${season}|${episode}`;
+    }
+
+    // Movie: extract "Title (Year)"
+    const stripped = clean
+        .replace(/\{[^}]*\}/g, '')
+        .replace(/\[[^\]]*\]/g, '')
+        .replace(/\b(1080p|720p|2160p|4k|bluray|blu ray|web dl|webrip|hdcam|hdrip|esub|msub|dubbed|hindi|english|tamil|telugu|kannada|malayalam|korean|chinese|french|spanish|arabic|malay|thai|japanese|multi|skyflixer|bollyflix|moviesmod|msubs)\b/gi, '')
         .replace(/\s+/g, ' ')
         .trim()
         .toLowerCase();
 
-    // Try to extract "Title (Year)" — the most reliable canonical key
-    const yearMatch = name.match(/^(.+?)\s*\((\d{4})\)/);
+    const yearMatch = stripped.match(/^(.+?)\s*\((\d{4})\)/);
     if (yearMatch) {
-        const title = yearMatch[1].replace(/\s+/g, ' ').trim();
-        return `${title} (${yearMatch[2]})`;
+        return `${yearMatch[1].trim()} (${yearMatch[2]})`;
     }
 
-    return name;
+    return stripped;
 }
 
 /**

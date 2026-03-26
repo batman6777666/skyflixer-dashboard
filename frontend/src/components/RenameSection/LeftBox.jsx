@@ -1,29 +1,45 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { fetchFiles } from '../../services/api';
+import { fetchFilesStream } from '../../services/api';
 import Button from '../common/Button';
-import LoadingSpinner from '../common/LoadingSpinner';
 import { toast } from 'react-toastify';
 
 const PAGE_SIZE = 20;
 
+const PLATFORM_LABELS = {
+    rpmshare: { label: 'RPMShare', color: '#3B82F6', short: 'RPM' },
+    streamp2p: { label: 'StreamP2P', color: '#8B5CF6', short: 'P2P' },
+    seekstreaming: { label: 'SeekStreaming', color: '#10B981', short: 'SEEK' },
+    upnshare: { label: 'UPnShare', color: '#F97316', short: 'UPN' }
+};
+
 export default function LeftBox() {
     const { files, updateFiles, isLoading, setIsLoading, currentPage, setCurrentPage } = useApp();
     const [searchQuery, setSearchQuery] = useState('');
+    const [fetchProgress, setFetchProgress] = useState(null); // { overallPercent, allProgress }
 
     const handleFetchFiles = async () => {
         setIsLoading(true);
+        setFetchProgress({ overallPercent: 0, allProgress: {} });
+
         try {
-            const response = await fetchFiles();
+            const response = await fetchFilesStream((progress) => {
+                setFetchProgress({
+                    overallPercent: progress.overallPercent || 0,
+                    allProgress: progress.allProgress || {}
+                });
+            });
+
             if (response.success) {
                 updateFiles(response.files || []);
-                setCurrentPage(0); // Reset to first page on new fetch
+                setCurrentPage(0);
                 toast.success(`✅ Fetched ${response.count} files`);
             }
         } catch (error) {
             toast.error(`❌ ${error.message}`);
         } finally {
             setIsLoading(false);
+            setFetchProgress(null);
         }
     };
 
@@ -44,8 +60,7 @@ export default function LeftBox() {
     };
 
     const getPlatformBadgeText = (platform) => {
-        const map = { rpmshare: 'RPM', streamp2p: 'P2P', seekstreaming: 'SEEK', upnshare: 'UPN' };
-        return map[platform] || platform.substring(0, 3).toUpperCase();
+        return PLATFORM_LABELS[platform]?.short || platform.substring(0, 3).toUpperCase();
     };
 
     const hasFiles = allFiles.length > 0;
@@ -82,6 +97,85 @@ export default function LeftBox() {
                         </Button>
                     </div>
 
+                    {/* ── Fetch Progress Bar ── */}
+                    {isLoading && fetchProgress && (
+                        <div style={{
+                            background: 'var(--color-card-bg, #1a1a2e)',
+                            border: '1px solid var(--color-border, #2d2d44)',
+                            borderRadius: '12px',
+                            padding: '16px',
+                            marginBottom: '16px'
+                        }}>
+                            {/* Overall progress */}
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                                <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-text-primary, #fff)' }}>
+                                    ⚡ Fetching from all platforms...
+                                </span>
+                                <span style={{
+                                    fontSize: '20px', fontWeight: 800, lineHeight: 1,
+                                    background: 'linear-gradient(135deg, #6C63FF, #00D9A3)',
+                                    WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+                                    backgroundClip: 'text'
+                                }}>
+                                    {fetchProgress.overallPercent}%
+                                </span>
+                            </div>
+
+                            {/* Main progress bar */}
+                            <div style={{
+                                height: '8px', borderRadius: '4px', overflow: 'hidden',
+                                background: 'var(--color-border, #2d2d44)', marginBottom: '12px'
+                            }}>
+                                <div style={{
+                                    height: '100%',
+                                    width: `${fetchProgress.overallPercent}%`,
+                                    background: 'linear-gradient(90deg, #6C63FF, #00D9A3)',
+                                    borderRadius: '4px',
+                                    transition: 'width 0.3s ease',
+                                    boxShadow: '0 0 10px rgba(108, 99, 255, 0.5)'
+                                }} />
+                            </div>
+
+                            {/* Per-platform mini progress */}
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                {Object.entries(PLATFORM_LABELS).map(([key, info]) => {
+                                    const pp = fetchProgress.allProgress?.[key] || { pagesCompleted: 0, totalPages: 1 };
+                                    const pct = pp.totalPages > 0 ? Math.round((pp.pagesCompleted / pp.totalPages) * 100) : 0;
+                                    return (
+                                        <div key={key} style={{
+                                            flex: '1 1 80px', minWidth: '80px',
+                                            background: info.color + '15',
+                                            border: `1px solid ${info.color}44`,
+                                            borderRadius: '8px', padding: '8px',
+                                            textAlign: 'center'
+                                        }}>
+                                            <div style={{ fontSize: '10px', fontWeight: 700, color: info.color, marginBottom: '4px' }}>
+                                                {info.short}
+                                            </div>
+                                            <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--color-text-primary, #fff)' }}>
+                                                {pct}%
+                                            </div>
+                                            <div style={{
+                                                height: '3px', borderRadius: '2px', overflow: 'hidden',
+                                                background: info.color + '22', marginTop: '4px'
+                                            }}>
+                                                <div style={{
+                                                    height: '100%', width: `${pct}%`,
+                                                    background: info.color,
+                                                    borderRadius: '2px',
+                                                    transition: 'width 0.3s ease'
+                                                }} />
+                                            </div>
+                                            <div style={{ fontSize: '9px', color: 'var(--color-text-secondary, #888)', marginTop: '3px' }}>
+                                                {pp.pagesCompleted}/{pp.totalPages} pages
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+
                     {/* Search */}
                     <input
                         type="text"
@@ -102,12 +196,11 @@ export default function LeftBox() {
 
                 {/* File List */}
                 <div className="max-h-[520px] overflow-y-auto space-y-2">
-                    {isLoading ? (
+                    {isLoading && !fetchProgress ? (
                         <div className="flex flex-col items-center justify-center py-20">
-                            <LoadingSpinner size="large" />
                             <p className="text-text-secondary mt-4">Fetching files from all platforms...</p>
                         </div>
-                    ) : pageFiles.length === 0 ? (
+                    ) : !isLoading && pageFiles.length === 0 ? (
                         <div className="text-center py-20 text-text-secondary">
                             {!hasFiles ? (
                                 <>
@@ -119,7 +212,7 @@ export default function LeftBox() {
                                 <p>No files match your search</p>
                             )}
                         </div>
-                    ) : (
+                    ) : !isLoading && (
                         pageFiles.map((file, index) => (
                             <div
                                 key={index}

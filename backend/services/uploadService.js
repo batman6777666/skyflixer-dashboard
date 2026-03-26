@@ -11,6 +11,7 @@
  */
 
 import axios from 'axios';
+import globalLimiter from './rateLimiter.js';
 
 const PLATFORMS = {
     streamp2p: { baseURL: 'https://streamp2p.com/api/v1', label: 'StreamP2P' },
@@ -21,10 +22,10 @@ const PLATFORMS = {
 
 function getApiKey(platform) {
     const map = {
-        streamp2p: [process.env.STREAMP2P_API_KEY_1, process.env.STREAMP2P_API_KEY_2],
-        seekstreaming: [process.env.SEEKSTREAMING_API_KEY_1, process.env.SEEKSTREAMING_API_KEY_2],
-        upnshare: [process.env.UPNSHARE_API_KEY_1, process.env.UPNSHARE_API_KEY_2],
-        rpmshare: [process.env.RPMSHARE_API_KEY_1, process.env.RPMSHARE_API_KEY_2]
+        streamp2p: [process.env.STREAMP2P_API_KEY_1, process.env.STREAMP2P_API_KEY_2, process.env.STREAMP2P_API_KEY_3],
+        seekstreaming: [process.env.SEEKSTREAMING_API_KEY_1, process.env.SEEKSTREAMING_API_KEY_2, process.env.SEEKSTREAMING_API_KEY_3],
+        upnshare: [process.env.UPNSHARE_API_KEY_1, process.env.UPNSHARE_API_KEY_2, process.env.UPNSHARE_API_KEY_3],
+        rpmshare: [process.env.RPMSHARE_API_KEY_1, process.env.RPMSHARE_API_KEY_2, process.env.RPMSHARE_API_KEY_3]
     };
     return (map[platform] || []).find(k => k) || null;
 }
@@ -32,25 +33,23 @@ function getApiKey(platform) {
 function makeClient(platform) {
     const apiKey = getApiKey(platform);
     if (!apiKey) throw new Error(`No API key for ${platform}`);
-    return axios.create({
+    return { client: axios.create({
         baseURL: PLATFORMS[platform].baseURL,
         headers: { 'api-token': apiKey, 'Content-Type': 'application/json' },
         timeout: 30000
-    });
+    }), apiKey };
 }
 
-// ── Submit URL: first 2 platforms, then remaining 2 once both start ───────────
+// ── Submit URL to all 4 platforms simultaneously ───────────
 export async function submitToAllPlatforms(url, name) {
     console.log(`\n📤 Submitting to all platforms: ${name}`);
 
-    const ids = Object.keys(PLATFORMS);  // ['streamp2p','seekstreaming','upnshare','rpmshare']
-    const first2 = ids.slice(0, 2);         // streamp2p, seekstreaming
-    const second2 = ids.slice(2);            // upnshare,  rpmshare
+    const ids = Object.keys(PLATFORMS);
 
-    // Shared closure so submitOne can access url/name
     const doSubmit = async (platform) => {
         try {
-            const client = makeClient(platform);
+            const { client, apiKey } = makeClient(platform);
+            await globalLimiter.acquire(apiKey);
             const response = await client.post('/video/advance-upload', { url, name });
             const taskId = response.data?.id || response.data?.data?.id;
             if (!taskId) throw new Error('No task ID in response');
@@ -62,17 +61,13 @@ export async function submitToAllPlatforms(url, name) {
         }
     };
 
-    // Step 1: submit to first 2 simultaneously
-    console.log('  → Wave 1: submitting to', first2.join(' + '));
-    const wave1 = await Promise.allSettled(first2.map(doSubmit));
-
-    // Step 2: as soon as wave1 responds (upload started on those 2), fire the remaining 2
-    console.log('  → Wave 2: submitting to', second2.join(' + '));
-    const wave2 = await Promise.allSettled(second2.map(doSubmit));
+    // Submit to all 4 simultaneously
+    console.log('  → Submitting to all 4 platforms simultaneously');
+    const results = await Promise.allSettled(ids.map(doSubmit));
 
     // Merge into keyed result object
     const out = {};
-    [...wave1, ...wave2].forEach(r => {
+    results.forEach(r => {
         const v = r.value || { platform: 'unknown', error: r.reason?.message || 'Unknown error' };
         out[v.platform] = v;
     });
@@ -81,7 +76,8 @@ export async function submitToAllPlatforms(url, name) {
 
 // ── Poll ONE platform task status ─────────────────────────────
 export async function getPlatformStatus(platform, taskId) {
-    const client = makeClient(platform);
+    const { client, apiKey } = makeClient(platform);
+    await globalLimiter.acquire(apiKey);
     const response = await client.get(`/video/advance-upload/${taskId}`);
     const data = response.data?.data || response.data;
     const status = data?.status || 'Processing';

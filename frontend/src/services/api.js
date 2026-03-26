@@ -1,125 +1,151 @@
 import axios from 'axios';
 
-// Dev: use relative /api (Vite proxy → localhost:5000, no CORS)
-// Prod: use VITE_API_BASE_URL from Cloudflare env variable
 const apiBase = import.meta.env.VITE_API_BASE_URL;
 const API_BASE_URL = apiBase ? `${apiBase}/api` : '/api';
 
 const apiClient = axios.create({
     baseURL: API_BASE_URL,
-    timeout: 120000, // 2 minutes for deep scan operations
-    headers: {
-        'Content-Type': 'application/json'
-    }
+    timeout: 120000,
+    headers: { 'Content-Type': 'application/json' }
 });
 
-/**
- * Fetch files from all platforms
- * @returns {Promise<Object>} - Response with files array
- */
+// ─── SSE Helper ───────────────────────────────────────────────
+function consumeSSE(path, onProgress) {
+    return new Promise((resolve, reject) => {
+        const baseUrl = apiBase || '';
+        const url = `${baseUrl}/api/${path}`;
+        const eventSource = new EventSource(url);
+
+        eventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'progress' && onProgress) {
+                    onProgress(data);
+                } else if (data.type === 'complete') {
+                    eventSource.close();
+                    resolve({ success: true, ...data });
+                } else if (data.type === 'error') {
+                    eventSource.close();
+                    reject(new Error(data.error || 'Stream error'));
+                }
+            } catch (e) { /* ignore parse errors */ }
+        };
+
+        eventSource.onerror = () => {
+            eventSource.close();
+            reject(new Error('Connection lost'));
+        };
+    });
+}
+
+// ─── Fetch Files ──────────────────────────────────────────────
+
 export async function fetchFiles() {
     try {
         const response = await apiClient.get('/fetch-files');
         return response.data;
     } catch (error) {
-        console.error('API Error (fetchFiles):', error);
         throw new Error(error.response?.data?.error || 'Failed to fetch files');
     }
 }
 
-/**
- * Process batch rename
- * @param {Array} files - Files to rename
- * @param {Array} newNames - New filenames
- * @returns {Promise<Object>} - Rename results
- */
+export function fetchFilesStream(onProgress) {
+    return consumeSSE('fetch-files-stream', onProgress);
+}
+
+// ─── Rename ───────────────────────────────────────────────────
+
 export async function renameBatch(files, newNames) {
     try {
         const response = await apiClient.post('/rename-batch', { files, newNames });
-        return response.data; // returns { success, jobId, totalFiles }
+        return response.data;
     } catch (error) {
-        console.error('API Error (renameBatch):', error);
         throw new Error(error.response?.data?.error || 'Failed to rename files');
     }
 }
 
-/**
- * Poll rename job status
- * @param {string} jobId
- * @returns {Promise<Object>} - { status, currentFile, totalFiles, successful, failed, results }
- */
 export async function getRenameStatus(jobId) {
     try {
         const response = await apiClient.get(`/rename-status/${jobId}`);
         return response.data;
     } catch (error) {
-        console.error('API Error (getRenameStatus):', error);
         throw new Error(error.response?.data?.error || 'Failed to get rename status');
     }
 }
 
-/**
- * Get current statistics
- * @returns {Promise<Object>} - Statistics data
- */
+// ─── Stats ────────────────────────────────────────────────────
+
 export async function getStats() {
     try {
         const response = await apiClient.get('/stats');
         return response.data;
     } catch (error) {
-        console.error('API Error (getStats):', error);
-        throw new Error(error.response?.data?.error || 'Failed to fetch statistics');
+        // Never throw on stats — return safe defaults silently
+        return {
+            success: true,
+            stats: {
+                today: { count: 0, successful: 0, failed: 0 },
+                last24h: { count: 0, successful: 0, failed: 0 },
+                successRate: 100,
+                recentActivity: []
+            }
+        };
     }
 }
 
-/**
- * Scan all platforms and find duplicate files
- * @returns {Promise<Object>} - { duplicates, totalDuplicates }
- */
+// ─── Duplicates ───────────────────────────────────────────────
+
 export async function findDuplicates() {
     try {
         const response = await apiClient.get('/find-duplicates');
         return response.data;
     } catch (error) {
-        console.error('API Error (findDuplicates):', error);
         throw new Error(error.response?.data?.error || 'Failed to find duplicates');
     }
 }
 
-/**
- * Delete all duplicate files across all platforms (keeps 1 copy per name)
- * @returns {Promise<Object>} - { results, totalDeleted, totalFailed }
- */
+export function findDuplicatesStream(onProgress) {
+    return consumeSSE('find-duplicates-stream', onProgress);
+}
+
 export async function deleteDuplicates() {
     try {
         const response = await apiClient.post('/delete-duplicates');
         return response.data;
     } catch (error) {
-        console.error('API Error (deleteDuplicates):', error);
         throw new Error(error.response?.data?.error || 'Failed to delete duplicates');
     }
 }
 
-/**
- * Compare all platforms and find files missing from any platform
- * @returns {Promise<Object>} - { missingFiles, totalMissing, platformCounts }
- */
+export function deleteDuplicatesStream(onProgress) {
+    return consumeSSE('delete-duplicates-stream', onProgress);
+}
+
+// ─── Missing Files ────────────────────────────────────────────
+
 export async function findMissingFiles() {
     try {
         const response = await apiClient.get('/missing-files');
         return response.data;
     } catch (error) {
-        console.error('API Error (findMissingFiles):', error);
         throw new Error(error.response?.data?.error || 'Failed to check missing files');
     }
 }
 
+export function findMissingFilesStream(onProgress) {
+    return consumeSSE('missing-files-stream', onProgress);
+}
+
 export default {
     fetchFiles,
+    fetchFilesStream,
     renameBatch,
+    getRenameStatus,
     getStats,
     findDuplicates,
+    findDuplicatesStream,
     deleteDuplicates,
-    findMissingFiles
+    deleteDuplicatesStream,
+    findMissingFiles,
+    findMissingFilesStream
 };
-

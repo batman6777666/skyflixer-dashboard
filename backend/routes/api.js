@@ -8,272 +8,284 @@ import { submitToAllPlatforms, getPlatformStatus } from '../services/uploadServi
 // ── In-memory upload history ──────────────────────────────────
 const uploadHistory = [];
 
-
-// Initialize router BEFORE using it
 const router = express.Router();
 
 /**
- * GET /api/fetch-files
- * Fetch files from all platforms with SKYFLIX filter
- */
-router.get('/fetch-files', async (req, res) => {
-    try {
-        console.log('\n📡 API: Fetch files request received');
-
-        const apiKeys = {
-            rpmshare: [
-                process.env.RPMSHARE_API_KEY_1,
-                process.env.RPMSHARE_API_KEY_2
-            ],
-            streamp2p: [
-                process.env.STREAMP2P_API_KEY_1,
-                process.env.STREAMP2P_API_KEY_2
-            ],
-            seekstreaming: [
-                process.env.SEEKSTREAMING_API_KEY_1,
-                process.env.SEEKSTREAMING_API_KEY_2
-            ],
-            upnshare: [
-                process.env.UPNSHARE_API_KEY_1,
-                process.env.UPNSHARE_API_KEY_2
-            ]
-        };
-
-        const files = await fetchFilesFromAllPlatforms(apiKeys);
-
-        res.json({
-            success: true,
-            count: files.length,
-            files: files
-        });
-
-    } catch (error) {
-        console.error('❌ API Error:', error.message);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// ── In-memory rename job store ─────────────────────────────────
-const renameJobs = new Map();
-
-/**
- * POST /api/rename-batch
- * Starts rename in background, responds IMMEDIATELY with jobId.
- * Frontend polls GET /api/rename-status/:jobId for progress.
- */
-router.post('/rename-batch', async (req, res) => {
-    const { files, newNames } = req.body;
-
-    if (!files || !newNames || files.length !== newNames.length) {
-        return res.status(400).json({
-            success: false,
-            error: 'Invalid request: files and newNames arrays must have the same length'
-        });
-    }
-
-    console.log(`\n📡 API: Batch rename request for ${files.length} files`);
-
-    const apiKeys = {
-        rpmshare: [process.env.RPMSHARE_API_KEY_1, process.env.RPMSHARE_API_KEY_2],
-        streamp2p: [process.env.STREAMP2P_API_KEY_1, process.env.STREAMP2P_API_KEY_2],
-        seekstreaming: [process.env.SEEKSTREAMING_API_KEY_1, process.env.SEEKSTREAMING_API_KEY_2],
-        upnshare: [process.env.UPNSHARE_API_KEY_1, process.env.UPNSHARE_API_KEY_2]
-    };
-
-    // Create job
-    const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2);
-    renameJobs.set(jobId, {
-        status: 'running',
-        currentFile: 0,
-        totalFiles: files.length,
-        successful: 0,
-        failed: 0,
-        results: null,
-        error: null,
-        startedAt: new Date().toISOString()
-    });
-
-    // ✅ Respond immediately — no more timeout errors
-    res.json({ success: true, jobId, totalFiles: files.length });
-
-    // Run rename in background (does NOT block the response)
-    processBatchRename(files, newNames, apiKeys, (progress) => {
-        const job = renameJobs.get(jobId);
-        if (job) {
-            job.currentFile = progress.currentFile;
-            job.totalFiles = progress.totalFiles;
-            job.currentBatch = progress.currentBatch;
-            job.totalBatches = progress.totalBatches;
-        }
-    })
-        .then(results => {
-            const job = renameJobs.get(jobId);
-            if (job) {
-                job.status = 'completed';
-                job.results = results;
-                job.successful = results.successful;
-                job.failed = results.failed;
-                job.currentFile = results.total;
-            }
-            console.log(`✅ Job ${jobId} complete: ${results.successful} ok, ${results.failed} failed`);
-            // Clean up after 1 hour
-            setTimeout(() => renameJobs.delete(jobId), 3600000);
-        })
-        .catch(err => {
-            const job = renameJobs.get(jobId);
-            if (job) { job.status = 'error'; job.error = err.message; }
-            console.error(`❌ Job ${jobId} failed:`, err.message);
-        });
-});
-
-/**
- * GET /api/rename-status/:jobId
- * Returns current job progress/result for polling.
- */
-router.get('/rename-status/:jobId', (req, res) => {
-    const job = renameJobs.get(req.params.jobId);
-    if (!job) return res.status(404).json({ success: false, error: 'Job not found or expired' });
-    res.json({ success: true, ...job });
-});
-
-/**
- * GET /api/stats
- * Get current statistics (IN-MEMORY, SESSION-ONLY)
- * Returns real success rate based on actual rename operations
- */
-router.get('/stats', async (req, res) => {
-    try {
-        // 📊 SESSION STATS - Real rename results from current session
-        // Success rate reflects actual rename operation outcomes
-        // Resets when server restarts, keeps last 24 hours
-
-        const stats = getSessionStats();
-
-        res.json({
-            success: true,
-            stats
-        });
-
-    } catch (error) {
-        console.error('❌ API Error:', error.message);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-
-
-/**
- * Helper to build apiKeys from env vars (shared across duplicate routes)
+ * Helper to build apiKeys from env vars (3 keys per provider)
  */
 function buildApiKeys() {
     return {
         rpmshare: [
             process.env.RPMSHARE_API_KEY_1,
-            process.env.RPMSHARE_API_KEY_2
-        ],
+            process.env.RPMSHARE_API_KEY_2,
+            process.env.RPMSHARE_API_KEY_3
+        ].filter(Boolean),
         streamp2p: [
             process.env.STREAMP2P_API_KEY_1,
-            process.env.STREAMP2P_API_KEY_2
-        ],
+            process.env.STREAMP2P_API_KEY_2,
+            process.env.STREAMP2P_API_KEY_3
+        ].filter(Boolean),
         seekstreaming: [
             process.env.SEEKSTREAMING_API_KEY_1,
-            process.env.SEEKSTREAMING_API_KEY_2
-        ],
+            process.env.SEEKSTREAMING_API_KEY_2,
+            process.env.SEEKSTREAMING_API_KEY_3
+        ].filter(Boolean),
         upnshare: [
             process.env.UPNSHARE_API_KEY_1,
-            process.env.UPNSHARE_API_KEY_2
-        ]
+            process.env.UPNSHARE_API_KEY_2,
+            process.env.UPNSHARE_API_KEY_3
+        ].filter(Boolean)
     };
 }
 
-// ─────────────────────────────────────────────
-// GET /api/find-duplicates
-// Scan all platforms and return duplicate file lists
-// ─────────────────────────────────────────────
+/** Helper: setup SSE response headers */
+function setupSSE(res) {
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no'
+    });
+}
+
+/** Helper: safely write SSE data */
+function sendSSE(res, data) {
+    try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch (e) { /* client disconnected */ }
+}
+
+// ═══════════════════════════════════════════════
+// FETCH FILES
+// ═══════════════════════════════════════════════
+
+/**
+ * GET /api/fetch-files — classic (no progress)
+ */
+router.get('/fetch-files', async (req, res) => {
+    try {
+        console.log('\n📡 Fetch files request');
+        const apiKeys = buildApiKeys();
+        const files = await fetchFilesFromAllPlatforms(apiKeys);
+        res.json({ success: true, count: files.length, files });
+    } catch (error) {
+        console.error('Fetch files error:', error.message);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/fetch-files-stream — SSE with real-time progress
+ */
+router.get('/fetch-files-stream', async (req, res) => {
+    setupSSE(res);
+    sendSSE(res, { type: 'start', message: 'Starting deep scan...' });
+
+    try {
+        const apiKeys = buildApiKeys();
+        const files = await fetchFilesFromAllPlatforms(apiKeys, (progress) => {
+            sendSSE(res, { type: 'progress', ...progress });
+        });
+        sendSSE(res, { type: 'complete', count: files.length, files });
+    } catch (error) {
+        sendSSE(res, { type: 'error', error: error.message });
+    }
+    res.end();
+});
+
+// ═══════════════════════════════════════════════
+// FIND DUPLICATES
+// ═══════════════════════════════════════════════
+
+/** GET /api/find-duplicates — classic */
 router.get('/find-duplicates', async (req, res) => {
     try {
-        console.log('\n📡 API: Find duplicates request received');
+        console.log('\n📡 Find duplicates request');
         const apiKeys = buildApiKeys();
         const result = await findDuplicates(apiKeys);
         res.json({ success: true, ...result });
     } catch (error) {
-        console.error('❌ API Error (find-duplicates):', error.message);
+        console.error('Find duplicates error:', error.message);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// ─────────────────────────────────────────────
-// POST /api/delete-duplicates
-// Delete duplicate files (keep 1 copy per name per platform)
-// ─────────────────────────────────────────────
+/** GET /api/find-duplicates-stream — SSE with progress */
+router.get('/find-duplicates-stream', async (req, res) => {
+    setupSSE(res);
+    sendSSE(res, { type: 'start', message: 'Scanning for duplicates...' });
+
+    try {
+        const apiKeys = buildApiKeys();
+        const result = await findDuplicates(apiKeys, (progress) => {
+            sendSSE(res, { type: 'progress', phase: 'scanning', ...progress });
+        });
+        sendSSE(res, { type: 'complete', ...result });
+    } catch (error) {
+        sendSSE(res, { type: 'error', error: error.message });
+    }
+    res.end();
+});
+
+// ═══════════════════════════════════════════════
+// DELETE DUPLICATES
+// ═══════════════════════════════════════════════
+
+/** POST /api/delete-duplicates — classic */
 router.post('/delete-duplicates', async (req, res) => {
     try {
-        console.log('\n📡 API: Delete duplicates request received');
+        console.log('\n📡 Delete duplicates request');
         const apiKeys = buildApiKeys();
         const result = await deleteDuplicates(apiKeys);
         res.json({ success: true, ...result });
     } catch (error) {
-        console.error('❌ API Error (delete-duplicates):', error.message);
+        console.error('Delete duplicates error:', error.message);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// ─────────────────────────────────────────────
-// GET /api/missing-files
-// Compare all platforms and report files missing from any one
-// ─────────────────────────────────────────────
+/** GET /api/delete-duplicates-stream — SSE with scanning + deletion progress */
+router.get('/delete-duplicates-stream', async (req, res) => {
+    setupSSE(res);
+    sendSSE(res, { type: 'start', message: 'Scanning then deleting duplicates...' });
+
+    try {
+        const apiKeys = buildApiKeys();
+        const result = await deleteDuplicates(
+            apiKeys,
+            // onProgress (scanning phase)
+            (progress) => {
+                sendSSE(res, { type: 'progress', phase: 'scanning', ...progress });
+            },
+            // onDeleteProgress (deletion phase)
+            (delProgress) => {
+                sendSSE(res, { type: 'progress', phase: 'deleting', ...delProgress });
+            }
+        );
+        sendSSE(res, { type: 'complete', ...result });
+    } catch (error) {
+        sendSSE(res, { type: 'error', error: error.message });
+    }
+    res.end();
+});
+
+// ═══════════════════════════════════════════════
+// MISSING FILES
+// ═══════════════════════════════════════════════
+
+/** GET /api/missing-files — classic */
 router.get('/missing-files', async (req, res) => {
     try {
-        console.log('\n📡 API: Missing files request received');
+        console.log('\n📡 Missing files request');
         const apiKeys = buildApiKeys();
         const result = await findMissingFiles(apiKeys);
         res.json({ success: true, ...result });
     } catch (error) {
-        console.error('❌ API Error (missing-files):', error.message);
+        console.error('Missing files error:', error.message);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// ─────────────────────────────────────────────
-// POST /api/upload-url
-// Submit URL to all 4 platforms simultaneously.
-// Returns immediately with each platform's taskId (or error).
-// Body: { url: string, name: string }
-// ─────────────────────────────────────────────
-router.post('/upload-url', async (req, res) => {
-    const { url, name } = req.body;
-    if (!url || !name) {
-        return res.status(400).json({ success: false, error: 'url and name are required' });
+/** GET /api/missing-files-stream — SSE with progress */
+router.get('/missing-files-stream', async (req, res) => {
+    setupSSE(res);
+    sendSSE(res, { type: 'start', message: 'Comparing all platforms...' });
+
+    try {
+        const apiKeys = buildApiKeys();
+        const result = await findMissingFiles(apiKeys, (progress) => {
+            sendSSE(res, { type: 'progress', phase: 'scanning', ...progress });
+        });
+        sendSSE(res, { type: 'complete', ...result });
+    } catch (error) {
+        sendSSE(res, { type: 'error', error: error.message });
+    }
+    res.end();
+});
+
+// ═══════════════════════════════════════════════
+// RENAME
+// ═══════════════════════════════════════════════
+
+const renameJobs = new Map();
+
+router.post('/rename-batch', async (req, res) => {
+    const { files, newNames } = req.body;
+    if (!files || !newNames || files.length !== newNames.length) {
+        return res.status(400).json({ success: false, error: 'files and newNames must match in length' });
     }
 
-    console.log(`\n📤 POST /api/upload-url  name="${name}"`);
+    console.log(`\n📡 Batch rename: ${files.length} files`);
+    const apiKeys = buildApiKeys();
+    const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+    renameJobs.set(jobId, {
+        status: 'running', currentFile: 0, totalFiles: files.length,
+        successful: 0, failed: 0, results: null, error: null, startedAt: new Date().toISOString()
+    });
+
+    res.json({ success: true, jobId, totalFiles: files.length });
+
+    processBatchRename(files, newNames, apiKeys, (progress) => {
+        const job = renameJobs.get(jobId);
+        if (job) { job.currentFile = progress.currentFile; job.totalFiles = progress.totalFiles; job.currentBatch = progress.currentBatch; job.totalBatches = progress.totalBatches; }
+    })
+        .then(results => {
+            const job = renameJobs.get(jobId);
+            if (job) { job.status = 'completed'; job.results = results; job.successful = results.successful; job.failed = results.failed; job.currentFile = results.total; }
+            console.log(`✅ Rename job ${jobId}: ${results.successful} ok, ${results.failed} failed`);
+            setTimeout(() => renameJobs.delete(jobId), 3600000);
+        })
+        .catch(err => {
+            const job = renameJobs.get(jobId);
+            if (job) { job.status = 'error'; job.error = err.message; }
+        });
+});
+
+router.get('/rename-status/:jobId', (req, res) => {
+    const job = renameJobs.get(req.params.jobId);
+    if (!job) return res.status(404).json({ success: false, error: 'Job not found' });
+    res.json({ success: true, ...job });
+});
+
+// ═══════════════════════════════════════════════
+// STATS
+// ═══════════════════════════════════════════════
+
+router.get('/stats', (req, res) => {
+    try {
+        const stats = getSessionStats();
+        res.json({ success: true, stats });
+    } catch (error) {
+        // Return safe defaults — never throw on stats
+        res.json({
+            success: true,
+            stats: {
+                today: { count: 0, successful: 0, failed: 0 },
+                last24h: { count: 0, successful: 0, failed: 0 },
+                successRate: 100,
+                recentActivity: []
+            }
+        });
+    }
+});
+
+// ═══════════════════════════════════════════════
+// UPLOAD
+// ═══════════════════════════════════════════════
+
+router.post('/upload-url', async (req, res) => {
+    const { url, name } = req.body;
+    if (!url || !name) return res.status(400).json({ success: false, error: 'url and name required' });
 
     try {
         const submissions = await submitToAllPlatforms(url, name);
-
-        // Save to history
         const entry = { url, name, timestamp: new Date().toISOString(), submissions };
         uploadHistory.push(entry);
         if (uploadHistory.length > 500) uploadHistory.shift();
-
         return res.json({ success: true, platforms: submissions });
     } catch (err) {
-        console.error('❌ upload-url error:', err.message);
         return res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// ─────────────────────────────────────────────
-// GET /api/upload-status/:platform/:taskId
-// Poll ONE platform task status.
-// Returns { status, percent, videos, error }
-// ─────────────────────────────────────────────
 router.get('/upload-status/:platform/:taskId', async (req, res) => {
     const { platform, taskId } = req.params;
     try {
@@ -284,10 +296,6 @@ router.get('/upload-status/:platform/:taskId', async (req, res) => {
     }
 });
 
-// ─────────────────────────────────────────────
-// GET /api/upload-history
-// Returns today's upload count and recent uploads
-// ─────────────────────────────────────────────
 router.get('/upload-history', (req, res) => {
     const now = Date.now();
     const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);

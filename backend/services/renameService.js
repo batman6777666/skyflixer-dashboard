@@ -5,7 +5,7 @@ import UPnShareAPI from '../api/UPnShareAPI.js';
 import { trackRename } from './sessionStats.js';
 
 /**
- * Process batch rename with delays and API key rotation
+ * Process batch rename with delays and API key rotation (3 keys)
  * @param {Array} files - Array of files to rename
  * @param {Array} newNames - Array of new filenames
  * @param {Object} apiKeys - All API keys
@@ -35,10 +35,13 @@ export async function processBatchRename(files, newNames, apiKeys, progressCallb
 
     console.log(`📦 Processing ${batches.length} batches (${BATCH_SIZE} files each)`);
 
+    // Number of available key sets
+    const numKeys = apiKeys.rpmshare.length; // 3 keys
+
     // Process each batch
     for (let i = 0; i < batches.length; i++) {
         const batch = batches[i];
-        const useKeySet = i % 2; // Alternate between key set 0 and 1
+        const useKeySet = i % numKeys; // Rotate through all available keys (0, 1, 2)
 
         console.log(`\n🔄 Processing batch ${batch.batchNumber}/${batches.length} with API key set ${useKeySet + 1}`);
 
@@ -105,7 +108,7 @@ export async function processBatchRename(files, newNames, apiKeys, progressCallb
                     results: renameResults
                 });
 
-                // Track in database
+                // Track in session stats
                 await trackRename(file.filename, newName, platformNames, allSuccessful ? 'success' : 'failed');
 
             } catch (error) {

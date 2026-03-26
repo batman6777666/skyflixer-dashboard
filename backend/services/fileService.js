@@ -6,10 +6,11 @@ import UPnShareAPI from '../api/UPnShareAPI.js';
 /**
  * Fetch ALL files from all platforms using deep scan (all pages)
  * @param {Object} apiKeys - Object containing all API keys
+ * @param {Function} onProgress - Optional callback({ platform, pagesCompleted, totalPages })
  * @returns {Promise<Array>} - Array of unique files with platform information
  */
-export async function fetchFilesFromAllPlatforms(apiKeys) {
-    // Initialize API clients
+export async function fetchFilesFromAllPlatforms(apiKeys, onProgress) {
+    // Use first key per platform for fetching (all keys access same account data)
     const rpmClient = new RPMShareAPI(apiKeys.rpmshare[0]);
     const streamClient = new StreamP2PAPI(apiKeys.streamp2p[0]);
     const seekClient = new SeekStreamingAPI(apiKeys.seekstreaming[0]);
@@ -17,13 +18,32 @@ export async function fetchFilesFromAllPlatforms(apiKeys) {
 
     console.log('\n🔍 DEEP SCAN: Fetching ALL files from ALL pages on all platforms...\n');
 
+    // Track progress per platform
+    const progress = {
+        rpmshare: { pagesCompleted: 0, totalPages: 1 },
+        streamp2p: { pagesCompleted: 0, totalPages: 1 },
+        seekstreaming: { pagesCompleted: 0, totalPages: 1 },
+        upnshare: { pagesCompleted: 0, totalPages: 1 }
+    };
+
+    const emitProgress = (platform, data) => {
+        progress[platform] = data;
+        if (onProgress) {
+            // Calculate overall percentage
+            const totalPages = Object.values(progress).reduce((s, p) => s + p.totalPages, 0);
+            const completedPages = Object.values(progress).reduce((s, p) => s + p.pagesCompleted, 0);
+            const overallPercent = totalPages > 0 ? Math.round((completedPages / totalPages) * 100) : 0;
+            onProgress({ platform, ...data, overallPercent, allProgress: { ...progress } });
+        }
+    };
+
     try {
-        // Deep scan all platforms in parallel — each fetches every page
+        // Deep scan all 4 platforms in parallel — each fetches every page
         const [rpmFiles, streamFiles, seekFiles, upnFiles] = await Promise.allSettled([
-            rpmClient.listAllFiles(),
-            streamClient.listAllFiles(),
-            seekClient.listAllFiles(),
-            upnClient.listAllFiles()
+            rpmClient.listAllFiles((p) => emitProgress('rpmshare', p)),
+            streamClient.listAllFiles((p) => emitProgress('streamp2p', p)),
+            seekClient.listAllFiles((p) => emitProgress('seekstreaming', p)),
+            upnClient.listAllFiles((p) => emitProgress('upnshare', p))
         ]);
 
         // Extract successful results
@@ -40,15 +60,11 @@ export async function fetchFilesFromAllPlatforms(apiKeys) {
         console.log(`   TOTAL RAW   = ${rpmFilesData.length + streamFilesData.length + seekFilesData.length + upnFilesData.length} files\n`);
 
         // 🚫 FILTER OUT FILES CONTAINING "SKYFLIXER" ANYWHERE IN THE NAME
-        // Show all files EXCEPT those that have "SKYFLIXER" branding
         const filterSkyflix = (files, platformName) => {
             const filtered = files.filter(file => {
                 const name = file.name || '';
                 const hasSkyflixer = name.toLowerCase().includes('skyflixer');
-                if (hasSkyflixer) {
-                    console.log(`🚫 [${platformName}] Filtered: ${name}`);
-                }
-                return !hasSkyflixer; // EXCLUDE SKYFLIXER files, show everything else
+                return !hasSkyflixer;
             });
             const removed = files.length - filtered.length;
             if (removed > 0) {
@@ -63,7 +79,7 @@ export async function fetchFilesFromAllPlatforms(apiKeys) {
         const upnFiltered = filterSkyflix(upnFilesData, 'UPnShare');
 
         const totalAfterFilter = rpmFiltered.length + streamFiltered.length + seekFiltered.length + upnFiltered.length;
-        console.log(`\n✅ SKYFLIXER-only filter: RPMShare=${rpmFiltered.length}, StreamP2P=${streamFiltered.length}, SeekStreaming=${seekFiltered.length}, UPnShare=${upnFiltered.length}`);
+        console.log(`\n✅ After SKYFLIXER filter: RPMShare=${rpmFiltered.length}, StreamP2P=${streamFiltered.length}, SeekStreaming=${seekFiltered.length}, UPnShare=${upnFiltered.length}`);
         console.log(`   TOTAL KEPT = ${totalAfterFilter} files\n`);
 
         // Match files across platforms using smart normalization
@@ -80,15 +96,6 @@ export async function fetchFilesFromAllPlatforms(apiKeys) {
 
 /**
  * canonicalKey — Same logic as duplicateService so fetch + duplicate + missing all agree.
- *
- * TV episodes  → "showname|S01|E01"
- *   "A Dream of Splendor S01E01 Episode 1 SKYFLIXER"          → "a dream of splendor|S01|E01"
- *   "A Dream of Splendor S01E01 Waiting For My Love {Chinese}" → "a dream of splendor|S01|E01"
- *   Both produce the SAME key → merged into one entry.
- *
- * Movies → "title (year)"
- *   "The Dark Knight (2008) Hindi 1080p.mkv"                  → "the dark knight (2008)"
- *   "The Dark Knight (2008) {Hindi-English} SKYFLIXER"        → "the dark knight (2008)"
  */
 function normalizeFilename(filename) {
     const clean = (filename || '')
@@ -131,7 +138,7 @@ function normalizeFilename(filename) {
  * Prefers SKYFLIXER-named files for the display filename.
  */
 function matchFilesAcrossPlatforms(rpmFiles, streamFiles, seekFiles, upnFiles) {
-    const fileMap = new Map(); // key → { filename, platforms, size, created_at }
+    const fileMap = new Map();
 
     const allPlatformFiles = [
         { files: rpmFiles, platform: 'rpmshare' },
@@ -156,12 +163,12 @@ function matchFilesAcrossPlatforms(rpmFiles, streamFiles, seekFiles, upnFiles) {
 
             const entry = fileMap.get(key);
 
-            // Prefer SKYFLIXER-named file as display name (it's the clean version)
+            // Prefer SKYFLIXER-named file as display name
             if (originalName.toLowerCase().includes('skyflixer')) {
                 entry.filename = originalName;
             }
 
-            // Avoid adding the same platform twice (e.g. original + skyflixer both on same platform)
+            // Avoid adding the same platform twice
             const alreadyAdded = entry.platforms.find(p => p.platform === platform);
             if (!alreadyAdded) {
                 entry.platforms.push({ platform, fileId: file.fileId });

@@ -1,13 +1,13 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { toast } from 'react-toastify';
-import { findDuplicates, deleteDuplicates, findMissingFiles } from '../../services/api.js';
+import { findDuplicatesStream, deleteDuplicatesStream, findMissingFilesStream } from '../../services/api.js';
 
 // ─── Platform display helpers ────────────────────────────
 const PLATFORM_LABELS = {
-    rpmshare: { label: 'RPMShare', color: '#3B82F6' },
-    streamp2p: { label: 'StreamP2P', color: '#8B5CF6' },
-    seekstreaming: { label: 'SeekStreaming', color: '#10B981' },
-    upnshare: { label: 'UPnShare', color: '#F97316' }
+    rpmshare: { label: 'RPMShare', color: '#3B82F6', short: 'RPM' },
+    streamp2p: { label: 'StreamP2P', color: '#8B5CF6', short: 'P2P' },
+    seekstreaming: { label: 'SeekStreaming', color: '#10B981', short: 'SEEK' },
+    upnshare: { label: 'UPnShare', color: '#F97316', short: 'UPN' }
 };
 
 function PlatformBadge({ platform, dim }) {
@@ -85,38 +85,100 @@ function SummaryBanner({ ok, text }) {
     );
 }
 
-// ── 5-second countdown display ───────────────────────────
-function CountdownOverlay({ count, label }) {
+// ═══════════════════════════════════════════════════════════
+// PROGRESS BAR COMPONENT — shared by all 3 operations
+// ═══════════════════════════════════════════════════════════
+function ProgressPanel({ label, progress }) {
+    const pct = progress.overallPercent ?? 0;
+    const phase = progress.phase || 'scanning';
+    const deleteInfo = progress.deleteProgress || null;
+
     return (
         <div style={{
-            display: 'flex', flexDirection: 'column', alignItems: 'center',
-            gap: '10px', padding: '16px'
+            background: 'var(--color-card-bg, #1a1a2e)',
+            border: '1px solid var(--color-border, #2d2d44)',
+            borderRadius: '12px', padding: '16px', marginTop: '16px'
         }}>
-            <div style={{
-                fontSize: 'clamp(48px,12vw,80px)', fontWeight: 900, lineHeight: 1,
-                background: 'linear-gradient(135deg,#6C63FF,#00D9A3)',
-                WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
-                backgroundClip: 'text',
-                animation: 'countPop 0.5s ease',
-                key: count // triggers re-animation
-            }}>
-                {count}
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-text-primary, #fff)' }}>
+                    ⚡ {label}
+                </span>
+                <span style={{
+                    fontSize: '20px', fontWeight: 800, lineHeight: 1,
+                    background: 'linear-gradient(135deg, #6C63FF, #00D9A3)',
+                    WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+                    backgroundClip: 'text'
+                }}>
+                    {phase === 'deleting' && deleteInfo ? deleteInfo.percent : pct}%
+                </span>
             </div>
-            <div style={{ color: 'var(--color-text-secondary)', fontSize: '13px', fontWeight: 600 }}>
-                {label}
+
+            {/* Phase label */}
+            <div style={{ fontSize: '11px', color: 'var(--color-text-secondary, #888)', marginBottom: '8px', fontWeight: 600 }}>
+                {phase === 'scanning' ? '📡 Scanning all platforms...' : phase === 'deleting' ? '🗑️ Deleting duplicates...' : '📡 Processing...'}
             </div>
+
+            {/* Main progress bar */}
             <div style={{
-                width: '200px', height: '4px',
-                background: 'var(--color-border)', borderRadius: '2px', overflow: 'hidden'
+                height: '8px', borderRadius: '4px', overflow: 'hidden',
+                background: 'var(--color-border, #2d2d44)', marginBottom: '12px'
             }}>
                 <div style={{
                     height: '100%',
-                    width: `${((5 - count) / 5) * 100}%`,
-                    background: 'linear-gradient(90deg,#6C63FF,#00D9A3)',
-                    borderRadius: '2px',
-                    transition: 'width 0.9s ease'
+                    width: `${phase === 'deleting' && deleteInfo ? deleteInfo.percent : pct}%`,
+                    background: phase === 'deleting' ? 'linear-gradient(90deg, #FF6B6B, #ee5a5a)' : 'linear-gradient(90deg, #6C63FF, #00D9A3)',
+                    borderRadius: '4px',
+                    transition: 'width 0.3s ease',
+                    boxShadow: '0 0 10px rgba(108, 99, 255, 0.5)'
                 }} />
             </div>
+
+            {/* Per-platform mini progress — only during scanning phase */}
+            {phase === 'scanning' && progress.allProgress && (
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {Object.entries(PLATFORM_LABELS).map(([key, info]) => {
+                        const pp = progress.allProgress[key] || { pagesCompleted: 0, totalPages: 1 };
+                        const ppct = pp.totalPages > 0 ? Math.round((pp.pagesCompleted / pp.totalPages) * 100) : 0;
+                        return (
+                            <div key={key} style={{
+                                flex: '1 1 80px', minWidth: '80px',
+                                background: info.color + '15',
+                                border: `1px solid ${info.color}44`,
+                                borderRadius: '8px', padding: '8px', textAlign: 'center'
+                            }}>
+                                <div style={{ fontSize: '10px', fontWeight: 700, color: info.color, marginBottom: '4px' }}>
+                                    {info.short}
+                                </div>
+                                <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--color-text-primary, #fff)' }}>
+                                    {ppct}%
+                                </div>
+                                <div style={{
+                                    height: '3px', borderRadius: '2px', overflow: 'hidden',
+                                    background: info.color + '22', marginTop: '4px'
+                                }}>
+                                    <div style={{
+                                        height: '100%', width: `${ppct}%`,
+                                        background: info.color,
+                                        borderRadius: '2px', transition: 'width 0.3s ease'
+                                    }} />
+                                </div>
+                                <div style={{ fontSize: '9px', color: 'var(--color-text-secondary, #888)', marginTop: '3px' }}>
+                                    {pp.pagesCompleted}/{pp.totalPages} pages
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+
+            {/* Delete progress details */}
+            {phase === 'deleting' && deleteInfo && (
+                <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', textAlign: 'center', marginTop: '4px' }}>
+                    Deleted {deleteInfo.deleted || 0} / {deleteInfo.total || 0} files
+                    {deleteInfo.name && <span> — "{deleteInfo.name}"</span>}
+                </div>
+            )}
         </div>
     );
 }
@@ -126,37 +188,21 @@ function CountdownOverlay({ count, label }) {
 // ══════════════════════════════════════════════════════════
 export default function DuplicateTools() {
     const [loading, setLoading] = useState(null); // 'find'|'delete'|'missing'|null
-    const [countdown, setCountdown] = useState(null); // 5..4..3..2..1
+    const [progress, setProgress] = useState({ overallPercent: 0, phase: 'scanning', allProgress: {}, deleteProgress: null });
     const [modal, setModal] = useState(null);
-    const countRef = useRef(null);
-
-    /* Run API scan. Countdown shows live elapsed time.
-       Results appear as soon as API responds — no forced wait. */
-    async function runWithCountdown(key, label, apiFn) {
-        setLoading(key);
-        setCountdown(1);
-
-        let n = 1;
-        countRef.current = setInterval(() => {
-            n++;
-            setCountdown(n);
-        }, 1000);
-
-        try {
-            const data = await apiFn(); // ← no artificial delay
-            clearInterval(countRef.current);
-            setCountdown(null);
-            return data;
-        } catch (err) {
-            clearInterval(countRef.current);
-            setCountdown(null);
-            throw err;
-        }
-    }
 
     async function handleFindDuplicates() {
+        setLoading('find');
+        setProgress({ overallPercent: 0, phase: 'scanning', allProgress: {}, deleteProgress: null });
         try {
-            const data = await runWithCountdown('find', 'Scanning for duplicates…', findDuplicates);
+            const data = await findDuplicatesStream((p) => {
+                setProgress(prev => ({
+                    ...prev,
+                    phase: p.phase || 'scanning',
+                    overallPercent: p.overallPercent ?? prev.overallPercent,
+                    allProgress: p.allProgress || prev.allProgress
+                }));
+            });
             setModal({ type: 'find', data });
             toast.info(`🔍 ${data.totalDuplicates} duplicate copies found`);
         } catch (err) {
@@ -165,11 +211,27 @@ export default function DuplicateTools() {
     }
 
     async function handleDeleteDuplicates() {
-        if (!window.confirm(
-            '⚠️ DELETE DUPLICATES\n\nThis will permanently delete extra copies.\nOne copy per file will be kept.\n\nProceed?'
-        )) return;
+        if (!window.confirm('⚠️ DELETE DUPLICATES\n\nThis will permanently delete extra copies.\nOne copy per file will be kept.\n\nProceed?')) return;
+
+        setLoading('delete');
+        setProgress({ overallPercent: 0, phase: 'scanning', allProgress: {}, deleteProgress: null });
         try {
-            const data = await runWithCountdown('delete', 'Deleting duplicates…', deleteDuplicates);
+            const data = await deleteDuplicatesStream((p) => {
+                if (p.phase === 'scanning') {
+                    setProgress(prev => ({
+                        ...prev,
+                        phase: 'scanning',
+                        overallPercent: p.overallPercent ?? prev.overallPercent,
+                        allProgress: p.allProgress || prev.allProgress
+                    }));
+                } else if (p.phase === 'deleting') {
+                    setProgress(prev => ({
+                        ...prev,
+                        phase: 'deleting',
+                        deleteProgress: { deleted: p.deleted, failed: p.failed, current: p.current, total: p.total, percent: p.percent, name: p.name }
+                    }));
+                }
+            });
             setModal({ type: 'delete', data });
             toast.success(data.totalDeleted > 0
                 ? `🗑️ Deleted ${data.totalDeleted} duplicate copies!`
@@ -180,8 +242,17 @@ export default function DuplicateTools() {
     }
 
     async function handleMissingFiles() {
+        setLoading('missing');
+        setProgress({ overallPercent: 0, phase: 'scanning', allProgress: {}, deleteProgress: null });
         try {
-            const data = await runWithCountdown('missing', 'Comparing all 4 platforms…', findMissingFiles);
+            const data = await findMissingFilesStream((p) => {
+                setProgress(prev => ({
+                    ...prev,
+                    phase: p.phase || 'scanning',
+                    overallPercent: p.overallPercent ?? prev.overallPercent,
+                    allProgress: p.allProgress || prev.allProgress
+                }));
+            });
             setModal({ type: 'missing', data });
             toast.info(data.totalMissing > 0
                 ? `📋 ${data.totalMissing} file(s) missing from at least 1 platform`
@@ -205,6 +276,10 @@ export default function DuplicateTools() {
             opacity: disabled ? 0.6 : 1
         };
     }
+
+    const loadingLabel = loading === 'find' ? 'Scanning for duplicates…'
+        : loading === 'delete' ? 'Deleting duplicates…'
+            : loading === 'missing' ? 'Comparing all 4 platforms…' : '';
 
     // ── Modal: Find Duplicates ─────────────────────────────
     function renderFindModal(data) {
@@ -291,7 +366,6 @@ export default function DuplicateTools() {
         const { missingFiles, totalMissing, platformCounts, uniqueCounts, syncedCount, totalUnique } = data;
         return (
             <>
-                {/* Per-platform counts — raw files + unique titles */}
                 <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
                     {Object.entries(platformCounts).map(([platform, count]) => (
                         <div key={platform} style={{ flex: '1 1 100px', background: 'var(--color-primary-bg)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '10px 16px', textAlign: 'center' }}>
@@ -306,8 +380,6 @@ export default function DuplicateTools() {
                         </div>
                     ))}
                 </div>
-
-                {/* Sync summary */}
                 {totalUnique != null && (
                     <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
                         <div style={{ flex: '1 1 140px', background: 'rgba(0,217,163,0.1)', border: '1px solid #00D9A344', borderRadius: '8px', padding: '12px 16px', textAlign: 'center' }}>
@@ -324,7 +396,6 @@ export default function DuplicateTools() {
                         </div>
                     </div>
                 )}
-
                 <SummaryBanner ok={totalMissing === 0} text={totalMissing > 0
                     ? `⚠️ ${totalMissing} title(s) are missing from at least 1 platform`
                     : '✅ All 4 platforms have exactly the same titles!'} />
@@ -348,10 +419,6 @@ export default function DuplicateTools() {
             </>
         );
     }
-
-    const loadingLabel = loading === 'find' ? 'Scanning for duplicates…'
-        : loading === 'delete' ? 'Deleting duplicates…'
-            : loading === 'missing' ? 'Comparing all 4 platforms…' : '';
 
     // ── Render ─────────────────────────────────────────────
     return (
@@ -388,16 +455,9 @@ export default function DuplicateTools() {
                     </button>
                 </div>
 
-                {/* Elapsed-time display */}
-                {loading && countdown !== null && (
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '16px' }}>
-                        <div style={{ fontSize: 'clamp(36px,10vw,60px)', fontWeight: 900, lineHeight: 1, background: 'linear-gradient(135deg,#6C63FF,#00D9A3)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-                            {countdown}s
-                        </div>
-                        <div style={{ color: 'var(--color-text-secondary)', fontSize: '13px', fontWeight: 600 }}>
-                            {loadingLabel}
-                        </div>
-                    </div>
+                {/* Progress bar — shown during any operation */}
+                {loading && (
+                    <ProgressPanel label={loadingLabel} progress={progress} />
                 )}
             </div>
 

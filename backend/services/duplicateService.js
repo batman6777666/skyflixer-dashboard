@@ -1,13 +1,11 @@
 /**
  * duplicateService.js — Smart Logic
  * ─────────────────────────────────────────────────────────────
- * Uses the same titleYearKey() normalization as fileService so that:
- *   • Duplicates: "Movie 2024 Hindi.mkv" and "Movie (2024) {Hindi} SKYFLIXER"
- *     on the same platform are correctly found as duplicates.
- *     The SKYFLIXER version is always KEPT, the old one deleted.
- *
- *   • Missing: same title+year on all 4 platforms matches even if
- *     one platform has the old name and another has the SKYFLIXER name.
+ * Uses canonicalKey() normalization.
+ * 
+ * IMPORTANT: Uses only 1 API key per platform for scanning.
+ * All keys access the same account data, so using multiple keys
+ * would double-count files and produce false duplicates.
  */
 
 import RPMShareAPI from '../api/RPMShareAPI.js';
@@ -18,46 +16,29 @@ import UPnShareAPI from '../api/UPnShareAPI.js';
 const PLATFORMS = ['streamp2p', 'rpmshare', 'seekstreaming', 'upnshare'];
 
 // ─── Canonical key shared by all 3 functions ──────────────────
-/**
- * canonicalKey — Smart key extraction for both TV episodes and movies.
- *
- * TV episodes  → "showname|S01|E01"
- *   Extracts everything BEFORE the SxxExx pattern as show name.
- *   Ignores everything after (episode title, language tags, SKYFLIXER).
- *   "A Dream of Splendor S01E01 Episode 1 SKYFLIXER"         → "a dream of splendor|S01|E01"
- *   "A Dream of Splendor S01E01 Waiting For My Love {Chinese}"→ "a dream of splendor|S01|E01"
- *
- * Movies → "title (year)"
- *   "The Dark Knight (2008) Hindi 1080p BluRay.mkv"          → "the dark knight (2008)"
- *   "The Dark Knight (2008) {Hindi-English} SKYFLIXER"       → "the dark knight (2008)"
- *
- * Everything after SxxExx or (year) is stripped: language tags,
- * quality specs, source tags, platform branding.
- */
 function canonicalKey(filename) {
     const clean = (filename || '')
         .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')      // strip accents
-        .replace(/\.(mkv|mp4|avi|mov|wmv)$/i, '') // strip extension
-        .replace(/\./g, ' ')                   // dots → spaces
-        .replace(/:/g, '')                     // remove colons
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\.(mkv|mp4|avi|mov|wmv)$/i, '')
+        .replace(/\./g, ' ')
+        .replace(/:/g, '')
         .replace(/\s+/g, ' ')
         .trim();
 
     // ── TV Episode: "ShowName S01E01 ..." ──
-    // Regex: ^(.*?) (S\d+)(E\d+)  – greedy show name, then season, then episode
     const epMatch = clean.match(/^(.*?)\s+(S\d+)(E\d+)/i);
     if (epMatch) {
         const showName = epMatch[1].replace(/\s+/g, ' ').trim().toLowerCase();
-        const season   = epMatch[2].toUpperCase(); // e.g. S01
-        const episode  = epMatch[3].toUpperCase(); // e.g. E01
+        const season   = epMatch[2].toUpperCase();
+        const episode  = epMatch[3].toUpperCase();
         return `${showName}|${season}|${episode}`;
     }
 
     // ── Movie: extract "Title (Year)" ──
     const stripped = clean
-        .replace(/\{[^}]*\}/g, '')             // strip {lang tags}
-        .replace(/\[[^\]]*\]/g, '')            // strip [source tags]
+        .replace(/\{[^}]*\}/g, '')
+        .replace(/\[[^\]]*\]/g, '')
         .replace(/\b(1080p|720p|2160p|4k|bluray|blu ray|web dl|webrip|hdcam|hdrip|esub|msub|dubbed|hindi|english|tamil|telugu|kannada|malayalam|korean|chinese|french|spanish|arabic|malay|thai|japanese|multi|skyflixer|bollyflix|moviesmod|msubs)\b/gi, '')
         .replace(/\s+/g, ' ')
         .trim()
@@ -75,6 +56,9 @@ function getId(file) {
     return file.fileId || file.id;
 }
 
+/**
+ * Create ONE client per platform using the FIRST API key only.
+ */
 function getClients(apiKeys) {
     return {
         streamp2p: new StreamP2PAPI(apiKeys.streamp2p[0]),
@@ -84,10 +68,30 @@ function getClients(apiKeys) {
     };
 }
 
-async function fetchRaw(apiKeys) {
+/**
+ * Fetch ALL files from ALL platforms in parallel WITH progress.
+ * @param {Object} apiKeys
+ * @param {Function} onProgress - optional({ platform, pagesCompleted, totalPages, overallPercent })
+ */
+async function fetchRaw(apiKeys, onProgress) {
     const clients = getClients(apiKeys);
+
+    // Track progress per platform
+    const progress = {};
+    PLATFORMS.forEach(p => { progress[p] = { pagesCompleted: 0, totalPages: 1 }; });
+
+    const emitProgress = (platform, data) => {
+        progress[platform] = data;
+        if (onProgress) {
+            const totalPages = Object.values(progress).reduce((s, p) => s + p.totalPages, 0);
+            const completedPages = Object.values(progress).reduce((s, p) => s + p.pagesCompleted, 0);
+            const overallPercent = totalPages > 0 ? Math.round((completedPages / totalPages) * 100) : 0;
+            onProgress({ platform, ...data, overallPercent, allProgress: { ...progress } });
+        }
+    };
+
     const results = await Promise.allSettled(
-        PLATFORMS.map(p => clients[p].listAllFiles())
+        PLATFORMS.map(p => clients[p].listAllFiles((pg) => emitProgress(p, pg)))
     );
 
     const raw = {};
@@ -103,14 +107,9 @@ async function fetchRaw(apiKeys) {
 // ══════════════════════════════════════════════════════════════
 // 1. FIND DUPLICATES — within each platform
 // ══════════════════════════════════════════════════════════════
-/**
- * Groups files by titleYearKey per platform.
- * If > 1 file maps to the same key, it's a duplicate set.
- * Keeps the SKYFLIXER-named file; marks the rest for deletion.
- */
-export async function findDuplicates(apiKeys) {
+export async function findDuplicates(apiKeys, onProgress) {
     console.log('\n🔍 FIND DUPLICATES: scanning each platform for same-content files...');
-    const { raw } = await fetchRaw(apiKeys);
+    const { raw } = await fetchRaw(apiKeys, onProgress);
 
     const result = {};
     let totalDuplicates = 0;
@@ -118,8 +117,7 @@ export async function findDuplicates(apiKeys) {
     for (const platform of PLATFORMS) {
         const files = raw[platform];
 
-        // Group files by canonical title+year key
-        const keyMap = new Map(); // canonicalKey → [{ fileId, name }, ...]
+        const keyMap = new Map();
         for (const file of files) {
             const key = canonicalKey(file.name);
             if (!keyMap.has(key)) keyMap.set(key, []);
@@ -129,15 +127,12 @@ export async function findDuplicates(apiKeys) {
         const platformDups = [];
         for (const [key, group] of keyMap.entries()) {
             if (group.length > 1) {
-                // Prefer the SKYFLIXER-named file as "keep"
                 const skyflixerIdx = group.findIndex(f => f.name.toLowerCase().includes('skyflixer'));
                 const keepIdx = skyflixerIdx >= 0 ? skyflixerIdx : 0;
                 const keep = group[keepIdx];
                 const remove = group.filter((_, i) => i !== keepIdx);
-
                 platformDups.push({ normalizedName: key, count: group.length, keep, remove });
                 totalDuplicates += remove.length;
-                console.log(`  [${platform}] DUP x${group.length}: keep="${keep.name}"`);
             }
         }
 
@@ -156,56 +151,60 @@ export async function findDuplicates(apiKeys) {
 // ══════════════════════════════════════════════════════════════
 // 2. DELETE DUPLICATES
 // ══════════════════════════════════════════════════════════════
-export async function deleteDuplicates(apiKeys) {
+export async function deleteDuplicates(apiKeys, onProgress, onDeleteProgress) {
     console.log('\n🗑️  DELETE DUPLICATES — single scan then delete...');
-    const { raw, clients } = await fetchRaw(apiKeys);
+    const { raw, clients } = await fetchRaw(apiKeys, onProgress);
 
-    let totalDeleted = 0;
-    let totalFailed = 0;
-    const results = [];
-
+    // Collect all items to delete
+    const allToDelete = [];
     for (const platform of PLATFORMS) {
         const files = raw[platform];
-
         const keyMap = new Map();
         for (const file of files) {
             const key = canonicalKey(file.name);
             if (!keyMap.has(key)) keyMap.set(key, []);
             keyMap.get(key).push({ fileId: getId(file), name: file.name });
         }
-
-        const toDelete = [];
         for (const [, group] of keyMap.entries()) {
             if (group.length > 1) {
                 const skyflixerIdx = group.findIndex(f => f.name.toLowerCase().includes('skyflixer'));
                 const keepIdx = skyflixerIdx >= 0 ? skyflixerIdx : 0;
                 for (let i = 0; i < group.length; i++) {
-                    if (i !== keepIdx) toDelete.push({ ...group[i], platform });
+                    if (i !== keepIdx) allToDelete.push({ ...group[i], platform });
                 }
             }
         }
+    }
 
-        if (toDelete.length === 0) {
-            console.log(`  [${platform}] ✅ No duplicates to delete`);
-            continue;
+    let totalDeleted = 0;
+    let totalFailed = 0;
+    const results = [];
+    const total = allToDelete.length;
+
+    if (total === 0) {
+        console.log('  ✅ No duplicates to delete');
+        if (onDeleteProgress) onDeleteProgress({ deleted: 0, total: 0, percent: 100 });
+        return { results, totalDeleted: 0, totalFailed: 0 };
+    }
+
+    console.log(`  Deleting ${total} duplicate(s)...`);
+
+    for (let i = 0; i < allToDelete.length; i++) {
+        const entry = allToDelete[i];
+        const client = clients[entry.platform];
+        const res = await client.deleteFile(entry.fileId);
+        const ok = res?.success === true;
+        if (ok) {
+            totalDeleted++;
+            results.push({ success: true, platform: entry.platform, fileId: entry.fileId, name: entry.name });
+        } else {
+            totalFailed++;
+            results.push({ success: false, platform: entry.platform, fileId: entry.fileId, name: entry.name, error: res?.error || 'Unknown error' });
         }
 
-        console.log(`  [${platform}] Deleting ${toDelete.length} duplicate(s)...`);
-        const client = clients[platform];
-
-        for (const entry of toDelete) {
-            const res = await client.deleteFile(entry.fileId);
-            const ok = res?.success === true;
-            if (ok) {
-                totalDeleted++;
-                results.push({ success: true, platform, fileId: entry.fileId, name: entry.name });
-                console.log(`    ✅ Deleted: "${entry.name}" (${entry.fileId})`);
-            } else {
-                totalFailed++;
-                results.push({ success: false, platform, fileId: entry.fileId, name: entry.name, error: res?.error || 'Unknown error' });
-                console.log(`    ❌ Failed: "${entry.name}"`);
-            }
-            await new Promise(r => setTimeout(r, 300));
+        if (onDeleteProgress) {
+            const percent = Math.round(((i + 1) / total) * 100);
+            onDeleteProgress({ deleted: totalDeleted, failed: totalFailed, current: i + 1, total, percent, name: entry.name });
         }
     }
 
@@ -216,17 +215,13 @@ export async function deleteDuplicates(apiKeys) {
 // ══════════════════════════════════════════════════════════════
 // 3. FIND MISSING FILES — across platforms
 // ══════════════════════════════════════════════════════════════
-/**
- * Uses canonicalKey() so TV episodes match even when episode titles differ,
- * and movies match even when naming formats differ across platforms.
- */
-export async function findMissingFiles(apiKeys) {
+export async function findMissingFiles(apiKeys, onProgress) {
     console.log('\n📋 FIND MISSING FILES: comparing across all platforms...');
-    const { raw } = await fetchRaw(apiKeys);
+    const { raw } = await fetchRaw(apiKeys, onProgress);
 
     const platformCounts = {};
-    const nameSets = {};     // platform → Map<canonicalKey, bestDisplayName>
-    const uniqueCounts = {}; // platform → unique title count
+    const nameSets = {};
+    const uniqueCounts = {};
 
     for (const platform of PLATFORMS) {
         platformCounts[platform] = raw[platform].length;
@@ -235,7 +230,6 @@ export async function findMissingFiles(apiKeys) {
         for (const file of raw[platform]) {
             const key = canonicalKey(file.name);
             const existing = nameSets[platform].get(key);
-            // Prefer SKYFLIXER-named version as display name
             if (!existing || file.name.toLowerCase().includes('skyflixer')) {
                 nameSets[platform].set(key, file.name);
             }
@@ -244,7 +238,6 @@ export async function findMissingFiles(apiKeys) {
         console.log(`  [${platform}] ${raw[platform].length} files → ${nameSets[platform].size} unique titles`);
     }
 
-    // Master union of all unique titles across all platforms
     const master = new Map();
     for (const platform of PLATFORMS) {
         for (const [key, name] of nameSets[platform]) {
@@ -262,17 +255,13 @@ export async function findMissingFiles(apiKeys) {
         const presentIn = PLATFORMS.filter(p => nameSets[p].has(key));
         const missingIn = PLATFORMS.filter(p => !nameSets[p].has(key));
 
-        // Build clean display title from the key itself
-        // Episode key format: "showname|S01|E01" → "Show Name S01E01"
-        // Movie key format:   "title (year)"      → "Title (Year)" as-is
         let displayTitle;
         if (key.includes('|')) {
             const [show, season, episode] = key.split('|');
-            // Title-case the show name
             const showTitled = show.replace(/\b\w/g, c => c.toUpperCase());
             displayTitle = `${showTitled} ${season}${episode}`;
         } else {
-            displayTitle = rawFilename; // movie: use the actual (best) filename
+            displayTitle = rawFilename;
         }
 
         if (missingIn.length === 0) {

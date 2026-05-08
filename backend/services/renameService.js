@@ -1,4 +1,4 @@
-import RPMShareAPI from '../api/RPMShareAPI.js';
+import VidPlayAPI from '../api/VidPlayAPI.js';
 import StreamP2PAPI from '../api/StreamP2PAPI.js';
 import SeekStreamingAPI from '../api/SeekStreamingAPI.js';
 import UPnShareAPI from '../api/UPnShareAPI.js';
@@ -36,7 +36,7 @@ export async function processBatchRename(files, newNames, apiKeys, progressCallb
     console.log(`📦 Processing ${batches.length} batches (${BATCH_SIZE} files each)`);
 
     // Number of available key sets
-    const numKeys = apiKeys.rpmshare.length; // 3 keys
+    const numKeys = apiKeys.vidplay.length; // 3 keys
 
     // Process each batch
     for (let i = 0; i < batches.length; i++) {
@@ -46,7 +46,7 @@ export async function processBatchRename(files, newNames, apiKeys, progressCallb
         console.log(`\n🔄 Processing batch ${batch.batchNumber}/${batches.length} with API key set ${useKeySet + 1}`);
 
         // Initialize API clients with rotated keys
-        const rpmClient = new RPMShareAPI(apiKeys.rpmshare[useKeySet]);
+        const vidplayClient = new VidPlayAPI(apiKeys.vidplay[useKeySet]);
         const streamClient = new StreamP2PAPI(apiKeys.streamp2p[useKeySet]);
         const seekClient = new SeekStreamingAPI(apiKeys.seekstreaming[useKeySet]);
         const upnClient = new UPnShareAPI(apiKeys.upnshare[useKeySet]);
@@ -73,8 +73,8 @@ export async function processBatchRename(files, newNames, apiKeys, progressCallb
             // Rename on all platforms that have this file
             const renamePromises = file.platforms.map(platformInfo => {
                 switch (platformInfo.platform) {
-                    case 'rpmshare':
-                        return rpmClient.renameFile(platformInfo.fileId, newName);
+                    case 'vidplay':
+                        return vidplayClient.renameFile(platformInfo.fileId, newName);
                     case 'streamp2p':
                         return streamClient.renameFile(platformInfo.fileId, newName);
                     case 'seekstreaming':

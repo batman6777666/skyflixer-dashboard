@@ -15,10 +15,10 @@ const router = express.Router();
  */
 function buildApiKeys() {
     return {
-        rpmshare: [
-            process.env.RPMSHARE_API_KEY_1,
-            process.env.RPMSHARE_API_KEY_2,
-            process.env.RPMSHARE_API_KEY_3
+        vidplay: [
+            process.env.VIDPLAY_API_KEY_1,
+            process.env.VIDPLAY_API_KEY_2,
+            process.env.VIDPLAY_API_KEY_3
         ].filter(Boolean),
         streamp2p: [
             process.env.STREAMP2P_API_KEY_1,
@@ -36,6 +36,31 @@ function buildApiKeys() {
             process.env.UPNSHARE_API_KEY_3
         ].filter(Boolean)
     };
+}
+
+/**
+ * Filter apiKeys to only include platforms specified in ?platforms= query param.
+ * If no param is provided, all platforms are included.
+ * @param {Object} req - Express request
+ * @returns {{ apiKeys: Object, enabledPlatforms: string[] }}
+ */
+function getFilteredApiKeys(req) {
+    const allKeys = buildApiKeys();
+    const platformsParam = req.query.platforms;
+    const allPlatforms = ['vidplay', 'streamp2p', 'seekstreaming', 'upnshare'];
+
+    if (!platformsParam) {
+        return { apiKeys: allKeys, enabledPlatforms: allPlatforms };
+    }
+
+    const enabledPlatforms = platformsParam.split(',').filter(p => allPlatforms.includes(p.trim()));
+    const filteredKeys = {};
+    for (const p of enabledPlatforms) {
+        filteredKeys[p] = allKeys[p] || [];
+    }
+
+    console.log(`  🎛️  Platforms filter: ${enabledPlatforms.join(', ')}`);
+    return { apiKeys: filteredKeys, enabledPlatforms };
 }
 
 /** Helper: setup SSE response headers */
@@ -111,13 +136,13 @@ router.get('/find-duplicates', async (req, res) => {
 /** GET /api/find-duplicates-stream — SSE with progress */
 router.get('/find-duplicates-stream', async (req, res) => {
     setupSSE(res);
-    sendSSE(res, { type: 'start', message: 'Scanning for duplicates...' });
+    const { apiKeys, enabledPlatforms } = getFilteredApiKeys(req);
+    sendSSE(res, { type: 'start', message: `Scanning for duplicates on ${enabledPlatforms.length} platform(s)...` });
 
     try {
-        const apiKeys = buildApiKeys();
         const result = await findDuplicates(apiKeys, (progress) => {
             sendSSE(res, { type: 'progress', phase: 'scanning', ...progress });
-        });
+        }, enabledPlatforms);
         sendSSE(res, { type: 'complete', ...result });
     } catch (error) {
         sendSSE(res, { type: 'error', error: error.message });
@@ -145,10 +170,10 @@ router.post('/delete-duplicates', async (req, res) => {
 /** GET /api/delete-duplicates-stream — SSE with scanning + deletion progress */
 router.get('/delete-duplicates-stream', async (req, res) => {
     setupSSE(res);
-    sendSSE(res, { type: 'start', message: 'Scanning then deleting duplicates...' });
+    const { apiKeys, enabledPlatforms } = getFilteredApiKeys(req);
+    sendSSE(res, { type: 'start', message: `Scanning then deleting duplicates on ${enabledPlatforms.length} platform(s)...` });
 
     try {
-        const apiKeys = buildApiKeys();
         const result = await deleteDuplicates(
             apiKeys,
             // onProgress (scanning phase)
@@ -158,7 +183,8 @@ router.get('/delete-duplicates-stream', async (req, res) => {
             // onDeleteProgress (deletion phase)
             (delProgress) => {
                 sendSSE(res, { type: 'progress', phase: 'deleting', ...delProgress });
-            }
+            },
+            enabledPlatforms
         );
         sendSSE(res, { type: 'complete', ...result });
     } catch (error) {
@@ -187,13 +213,13 @@ router.get('/missing-files', async (req, res) => {
 /** GET /api/missing-files-stream — SSE with progress */
 router.get('/missing-files-stream', async (req, res) => {
     setupSSE(res);
-    sendSSE(res, { type: 'start', message: 'Comparing all platforms...' });
+    const { apiKeys, enabledPlatforms } = getFilteredApiKeys(req);
+    sendSSE(res, { type: 'start', message: `Comparing ${enabledPlatforms.length} platform(s)...` });
 
     try {
-        const apiKeys = buildApiKeys();
         const result = await findMissingFiles(apiKeys, (progress) => {
             sendSSE(res, { type: 'progress', phase: 'scanning', ...progress });
-        });
+        }, enabledPlatforms);
         sendSSE(res, { type: 'complete', ...result });
     } catch (error) {
         sendSSE(res, { type: 'error', error: error.message });

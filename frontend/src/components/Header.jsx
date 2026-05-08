@@ -2,7 +2,7 @@ import React from 'react';
 
 export default function Header({ theme, toggleTheme }) {
     const platforms = [
-        { name: 'RPMShare', color: '#3B82F6' },
+        { name: 'VidPlay', color: '#E34D67' },
         { name: 'StreamP2P', color: '#8B5CF6' },
         { name: 'SeekStreaming', color: '#10B981' },
         { name: 'UPnShare', color: '#F97316' }

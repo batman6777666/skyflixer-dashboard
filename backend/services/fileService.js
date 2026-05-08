@@ -1,4 +1,4 @@
-import RPMShareAPI from '../api/RPMShareAPI.js';
+import VidPlayAPI from '../api/VidPlayAPI.js';
 import StreamP2PAPI from '../api/StreamP2PAPI.js';
 import SeekStreamingAPI from '../api/SeekStreamingAPI.js';
 import UPnShareAPI from '../api/UPnShareAPI.js';
@@ -11,7 +11,7 @@ import UPnShareAPI from '../api/UPnShareAPI.js';
  */
 export async function fetchFilesFromAllPlatforms(apiKeys, onProgress) {
     // Use first key per platform for fetching (all keys access same account data)
-    const rpmClient = new RPMShareAPI(apiKeys.rpmshare[0]);
+    const vidplayClient = new VidPlayAPI(apiKeys.vidplay[0]);
     const streamClient = new StreamP2PAPI(apiKeys.streamp2p[0]);
     const seekClient = new SeekStreamingAPI(apiKeys.seekstreaming[0]);
     const upnClient = new UPnShareAPI(apiKeys.upnshare[0]);
@@ -20,7 +20,7 @@ export async function fetchFilesFromAllPlatforms(apiKeys, onProgress) {
 
     // Track progress per platform
     const progress = {
-        rpmshare: { pagesCompleted: 0, totalPages: 1 },
+        vidplay: { pagesCompleted: 0, totalPages: 1 },
         streamp2p: { pagesCompleted: 0, totalPages: 1 },
         seekstreaming: { pagesCompleted: 0, totalPages: 1 },
         upnshare: { pagesCompleted: 0, totalPages: 1 }
@@ -39,51 +39,28 @@ export async function fetchFilesFromAllPlatforms(apiKeys, onProgress) {
 
     try {
         // Deep scan all 4 platforms in parallel — each fetches every page
-        const [rpmFiles, streamFiles, seekFiles, upnFiles] = await Promise.allSettled([
-            rpmClient.listAllFiles((p) => emitProgress('rpmshare', p)),
+        const [vidplayFiles, streamFiles, seekFiles, upnFiles] = await Promise.allSettled([
+            vidplayClient.listAllFiles((p) => emitProgress('vidplay', p)),
             streamClient.listAllFiles((p) => emitProgress('streamp2p', p)),
             seekClient.listAllFiles((p) => emitProgress('seekstreaming', p)),
             upnClient.listAllFiles((p) => emitProgress('upnshare', p))
         ]);
 
         // Extract successful results
-        const rpmFilesData = rpmFiles.status === 'fulfilled' ? rpmFiles.value : [];
+        const vidplayFilesData = vidplayFiles.status === 'fulfilled' ? vidplayFiles.value : [];
         const streamFilesData = streamFiles.status === 'fulfilled' ? streamFiles.value : [];
         const seekFilesData = seekFiles.status === 'fulfilled' ? seekFiles.value : [];
         const upnFilesData = upnFiles.status === 'fulfilled' ? upnFiles.value : [];
 
-        console.log(`\n📊 Deep scan complete:`);
-        console.log(`   RPMShare    = ${rpmFilesData.length} files`);
+        console.log(`\n📊 Deep scan complete (SKYFLIXER already filtered at API level):`);
+        console.log(`   VidPlay     = ${vidplayFilesData.length} files`);
         console.log(`   StreamP2P   = ${streamFilesData.length} files`);
         console.log(`   SeekStreaming = ${seekFilesData.length} files`);
         console.log(`   UPnShare    = ${upnFilesData.length} files`);
-        console.log(`   TOTAL RAW   = ${rpmFilesData.length + streamFilesData.length + seekFilesData.length + upnFilesData.length} files\n`);
-
-        // 🚫 FILTER OUT FILES CONTAINING "SKYFLIXER" ANYWHERE IN THE NAME
-        const filterSkyflix = (files, platformName) => {
-            const filtered = files.filter(file => {
-                const name = file.name || '';
-                const hasSkyflixer = name.toLowerCase().includes('skyflixer');
-                return !hasSkyflixer;
-            });
-            const removed = files.length - filtered.length;
-            if (removed > 0) {
-                console.log(`   ✂️  ${platformName}: removed ${removed} SKYFLIXER file(s), kept ${filtered.length}`);
-            }
-            return filtered;
-        };
-
-        const rpmFiltered = filterSkyflix(rpmFilesData, 'RPMShare');
-        const streamFiltered = filterSkyflix(streamFilesData, 'StreamP2P');
-        const seekFiltered = filterSkyflix(seekFilesData, 'SeekStreaming');
-        const upnFiltered = filterSkyflix(upnFilesData, 'UPnShare');
-
-        const totalAfterFilter = rpmFiltered.length + streamFiltered.length + seekFiltered.length + upnFiltered.length;
-        console.log(`\n✅ After SKYFLIXER filter: RPMShare=${rpmFiltered.length}, StreamP2P=${streamFiltered.length}, SeekStreaming=${seekFiltered.length}, UPnShare=${upnFiltered.length}`);
-        console.log(`   TOTAL KEPT = ${totalAfterFilter} files\n`);
+        console.log(`   TOTAL       = ${vidplayFilesData.length + streamFilesData.length + seekFilesData.length + upnFilesData.length} files\n`);
 
         // Match files across platforms using smart normalization
-        const matchedFiles = matchFilesAcrossPlatforms(rpmFiltered, streamFiltered, seekFiltered, upnFiltered);
+        const matchedFiles = matchFilesAcrossPlatforms(vidplayFilesData, streamFilesData, seekFilesData, upnFilesData);
 
         console.log(`✅ Total unique groups: ${matchedFiles.length}`);
 
@@ -137,11 +114,11 @@ function normalizeFilename(filename) {
  * Match files across platforms and create unique list.
  * Prefers SKYFLIXER-named files for the display filename.
  */
-function matchFilesAcrossPlatforms(rpmFiles, streamFiles, seekFiles, upnFiles) {
+function matchFilesAcrossPlatforms(vidplayFiles, streamFiles, seekFiles, upnFiles) {
     const fileMap = new Map();
 
     const allPlatformFiles = [
-        { files: rpmFiles, platform: 'rpmshare' },
+        { files: vidplayFiles, platform: 'vidplay' },
         { files: streamFiles, platform: 'streamp2p' },
         { files: seekFiles, platform: 'seekstreaming' },
         { files: upnFiles, platform: 'upnshare' }

@@ -4,7 +4,7 @@ import { findDuplicatesStream, deleteDuplicatesStream, findMissingFilesStream } 
 
 // ─── Platform display helpers ────────────────────────────
 const PLATFORM_LABELS = {
-    rpmshare: { label: 'RPMShare', color: '#3B82F6', short: 'RPM' },
+    vidplay: { label: 'VidPlay', color: '#E34D67', short: 'VP' },
     streamp2p: { label: 'StreamP2P', color: '#8B5CF6', short: 'P2P' },
     seekstreaming: { label: 'SeekStreaming', color: '#10B981', short: 'SEEK' },
     upnshare: { label: 'UPnShare', color: '#F97316', short: 'UPN' }
@@ -190,19 +190,28 @@ export default function DuplicateTools() {
     const [loading, setLoading] = useState(null); // 'find'|'delete'|'missing'|null
     const [progress, setProgress] = useState({ overallPercent: 0, phase: 'scanning', allProgress: {}, deleteProgress: null });
     const [modal, setModal] = useState(null);
+    const [enabledPlatforms, setEnabledPlatforms] = useState({
+        vidplay: true,
+        streamp2p: true,
+        seekstreaming: true,
+        upnshare: true
+    });
+
+    const getActivePlatforms = () => Object.entries(enabledPlatforms).filter(([, v]) => v).map(([k]) => k);
+    const activeCount = getActivePlatforms().length;
 
     async function handleFindDuplicates() {
         setLoading('find');
         setProgress({ overallPercent: 0, phase: 'scanning', allProgress: {}, deleteProgress: null });
         try {
-            const data = await findDuplicatesStream((p) => {
+        const data = await findDuplicatesStream((p) => {
                 setProgress(prev => ({
                     ...prev,
                     phase: p.phase || 'scanning',
                     overallPercent: p.overallPercent ?? prev.overallPercent,
                     allProgress: p.allProgress || prev.allProgress
                 }));
-            });
+            }, getActivePlatforms());
             setModal({ type: 'find', data });
             toast.info(`🔍 ${data.totalDuplicates} duplicate copies found`);
         } catch (err) {
@@ -231,7 +240,7 @@ export default function DuplicateTools() {
                         deleteProgress: { deleted: p.deleted, failed: p.failed, current: p.current, total: p.total, percent: p.percent, name: p.name }
                     }));
                 }
-            });
+            }, getActivePlatforms());
             setModal({ type: 'delete', data });
             toast.success(data.totalDeleted > 0
                 ? `🗑️ Deleted ${data.totalDeleted} duplicate copies!`
@@ -252,7 +261,7 @@ export default function DuplicateTools() {
                     overallPercent: p.overallPercent ?? prev.overallPercent,
                     allProgress: p.allProgress || prev.allProgress
                 }));
-            });
+            }, getActivePlatforms());
             setModal({ type: 'missing', data });
             toast.info(data.totalMissing > 0
                 ? `📋 ${data.totalMissing} file(s) missing from at least 1 platform`
@@ -263,7 +272,7 @@ export default function DuplicateTools() {
     }
 
     function btnStyle(gradient, glow) {
-        const disabled = loading !== null;
+    const disabled = loading !== null || activeCount === 0;
         return {
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
             padding: '13px 16px', borderRadius: '10px', border: 'none',
@@ -286,7 +295,7 @@ export default function DuplicateTools() {
         const { duplicates, totalDuplicates } = data;
         const hasDups = totalDuplicates > 0;
         let totalGroups = 0;
-        for (const p of ['streamp2p', 'rpmshare', 'seekstreaming', 'upnshare']) totalGroups += (duplicates[p] || []).length;
+        for (const p of ['streamp2p', 'vidplay', 'seekstreaming', 'upnshare']) totalGroups += (duplicates[p] || []).length;
         return (
             <>
                 <SummaryBanner ok={!hasDups} text={hasDups
@@ -298,7 +307,7 @@ export default function DuplicateTools() {
                         <span style={{ color: '#00D9A3' }}>✅ GREEN</span> = kept &nbsp;|&nbsp; <span style={{ color: '#FF6B6B' }}>❌ RED</span> = will be deleted
                     </div>
                 )}
-                {['streamp2p', 'rpmshare', 'seekstreaming', 'upnshare'].map(platform => {
+                {['streamp2p', 'vidplay', 'seekstreaming', 'upnshare'].map(platform => {
                     const dups = duplicates[platform] || [];
                     if (dups.length === 0) return null;
                     return (
@@ -436,20 +445,91 @@ export default function DuplicateTools() {
                 <h3 style={{ margin: '0 0 4px 0', fontSize: 'clamp(15px,3.5vw,18px)', fontWeight: 700, color: 'var(--color-text-primary)' }}>
                     🛠️ File Management Tools
                 </h3>
-                <p style={{ margin: '0 0 16px 0', fontSize: '13px', color: 'var(--color-text-secondary)' }}>
-                    Scan all 4 video hosting platforms for duplicates and missing files
+                <p style={{ margin: '0 0 14px 0', fontSize: '13px', color: 'var(--color-text-secondary)' }}>
+                    Toggle platforms on/off, then scan for duplicates or missing files
                 </p>
 
+                {/* ── Platform Toggles ── */}
+                <div style={{
+                    display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px',
+                    padding: '12px 14px',
+                    background: 'var(--color-primary-bg)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: '12px'
+                }}>
+                    {Object.entries(PLATFORM_LABELS).map(([key, info]) => {
+                        const isOn = enabledPlatforms[key];
+                        return (
+                            <button
+                                key={key}
+                                onClick={() => setEnabledPlatforms(prev => ({ ...prev, [key]: !prev[key] }))}
+                                disabled={loading !== null}
+                                style={{
+                                    display: 'flex', alignItems: 'center', gap: '8px',
+                                    padding: '8px 14px', borderRadius: '10px',
+                                    border: `1.5px solid ${isOn ? info.color : 'var(--color-border)'}`,
+                                    background: isOn ? info.color + '18' : 'transparent',
+                                    cursor: loading ? 'not-allowed' : 'pointer',
+                                    transition: 'all 0.25s ease',
+                                    opacity: loading ? 0.5 : 1,
+                                    flex: '1 1 120px', minWidth: '120px'
+                                }}
+                            >
+                                {/* Toggle pill */}
+                                <div style={{
+                                    width: '36px', height: '20px', borderRadius: '10px',
+                                    background: isOn ? info.color : 'var(--color-border)',
+                                    position: 'relative', transition: 'background 0.25s ease',
+                                    flexShrink: 0
+                                }}>
+                                    <div style={{
+                                        width: '16px', height: '16px', borderRadius: '50%',
+                                        background: '#fff',
+                                        position: 'absolute', top: '2px',
+                                        left: isOn ? '18px' : '2px',
+                                        transition: 'left 0.25s ease',
+                                        boxShadow: '0 1px 3px rgba(0,0,0,0.3)'
+                                    }} />
+                                </div>
+                                {/* Platform dot + label */}
+                                <div style={{
+                                    width: '8px', height: '8px', borderRadius: '50%',
+                                    background: isOn ? info.color : '#555',
+                                    boxShadow: isOn ? `0 0 6px ${info.color}` : 'none',
+                                    flexShrink: 0
+                                }} />
+                                <span style={{
+                                    fontSize: '12px', fontWeight: 700,
+                                    color: isOn ? info.color : 'var(--color-text-secondary)',
+                                    whiteSpace: 'nowrap'
+                                }}>
+                                    {info.label}
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
+
+                {/* Active count hint */}
+                {activeCount === 0 && (
+                    <div style={{
+                        fontSize: '12px', color: '#FF6B6B', fontWeight: 600,
+                        marginBottom: '12px', textAlign: 'center'
+                    }}>
+                        ⚠️ Enable at least one platform to perform an action
+                    </div>
+                )}
+
                 <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                    <button onClick={handleFindDuplicates} disabled={loading !== null}
+                    <button onClick={handleFindDuplicates} disabled={loading !== null || activeCount === 0}
                         style={btnStyle('linear-gradient(135deg,#6C63FF,#8B5CF6)', '0 4px 15px rgba(108,99,255,0.4)')}>
                         {loading === 'find' ? <Spinner /> : '🔍'} Find Duplicate
                     </button>
-                    <button onClick={handleDeleteDuplicates} disabled={loading !== null}
+                    <button onClick={handleDeleteDuplicates} disabled={loading !== null || activeCount === 0}
                         style={btnStyle('linear-gradient(135deg,#FF6B6B,#ee5a5a)', '0 4px 15px rgba(255,107,107,0.4)')}>
                         {loading === 'delete' ? <Spinner /> : '🗑️'} Delete Duplicate
                     </button>
-                    <button onClick={handleMissingFiles} disabled={loading !== null}
+                    <button onClick={handleMissingFiles} disabled={loading !== null || activeCount === 0}
                         style={btnStyle('linear-gradient(135deg,#00D9A3,#00b88a)', '0 4px 15px rgba(0,217,163,0.4)')}>
                         {loading === 'missing' ? <Spinner /> : '📋'} Missing Files
                     </button>

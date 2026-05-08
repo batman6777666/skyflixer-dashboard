@@ -7,7 +7,7 @@ import { toast } from 'react-toastify';
 const PAGE_SIZE = 20;
 
 const PLATFORM_LABELS = {
-    rpmshare: { label: 'RPMShare', color: '#3B82F6', short: 'RPM' },
+    vidplay: { label: 'VidPlay', color: '#E34D67', short: 'VP' },
     streamp2p: { label: 'StreamP2P', color: '#8B5CF6', short: 'P2P' },
     seekstreaming: { label: 'SeekStreaming', color: '#10B981', short: 'SEEK' },
     upnshare: { label: 'UPnShare', color: '#F97316', short: 'UPN' }
@@ -239,7 +239,7 @@ export default function LeftBox() {
                                         {file.platforms && Array.isArray(file.platforms) && file.platforms.map((p, i) => (
                                             <div
                                                 key={i}
-                                                className={`platform-badge ${p.platform === 'rpmshare' ? 'rpm' :
+                                                className={`platform-badge ${p.platform === 'vidplay' ? 'vidplay' :
                                                     p.platform === 'streamp2p' ? 'stream' :
                                                         p.platform === 'seekstreaming' ? 'seek' :
                                                             p.platform === 'upnshare' ? 'upn' : 'seek'

@@ -20,12 +20,14 @@ class SeekStreamingAPI {
             attempt++;
             try {
                 await globalLimiter.acquire(this.apiKey);
-                const response = await this.client.get('/video/manage', { params: { page } });
+                const response = await this.client.get('/video/manage', { params: { page, perPage: 500 } });
                 const data = response.data;
                 const files = Array.isArray(data.data) ? data.data : [];
                 const maxPage = data.metadata?.maxPage || 1;
                 return {
-                    files: files.map(f => ({ ...f, platform: 'seekstreaming', fileId: f.id })),
+                    files: files
+                        .filter(f => !((f.name || '').toLowerCase().includes('skyflixer')))
+                        .map(f => ({ ...f, platform: 'seekstreaming', fileId: f.id })),
                     maxPage
                 };
             } catch (error) {

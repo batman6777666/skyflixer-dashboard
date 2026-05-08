@@ -10,10 +10,14 @@ const apiClient = axios.create({
 });
 
 // ─── SSE Helper ───────────────────────────────────────────────
-function consumeSSE(path, onProgress) {
+function consumeSSE(path, onProgress, queryParams = {}) {
     return new Promise((resolve, reject) => {
         const baseUrl = apiBase || '';
-        const url = `${baseUrl}/api/${path}`;
+        const qs = Object.entries(queryParams)
+            .filter(([, v]) => v !== undefined && v !== null)
+            .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+            .join('&');
+        const url = `${baseUrl}/api/${path}${qs ? '?' + qs : ''}`;
         const eventSource = new EventSource(url);
 
         eventSource.onmessage = (event) => {
@@ -104,8 +108,9 @@ export async function findDuplicates() {
     }
 }
 
-export function findDuplicatesStream(onProgress) {
-    return consumeSSE('find-duplicates-stream', onProgress);
+export function findDuplicatesStream(onProgress, platforms) {
+    const params = platforms ? { platforms: platforms.join(',') } : {};
+    return consumeSSE('find-duplicates-stream', onProgress, params);
 }
 
 export async function deleteDuplicates() {
@@ -117,8 +122,9 @@ export async function deleteDuplicates() {
     }
 }
 
-export function deleteDuplicatesStream(onProgress) {
-    return consumeSSE('delete-duplicates-stream', onProgress);
+export function deleteDuplicatesStream(onProgress, platforms) {
+    const params = platforms ? { platforms: platforms.join(',') } : {};
+    return consumeSSE('delete-duplicates-stream', onProgress, params);
 }
 
 // ─── Missing Files ────────────────────────────────────────────
@@ -132,8 +138,9 @@ export async function findMissingFiles() {
     }
 }
 
-export function findMissingFilesStream(onProgress) {
-    return consumeSSE('missing-files-stream', onProgress);
+export function findMissingFilesStream(onProgress, platforms) {
+    const params = platforms ? { platforms: platforms.join(',') } : {};
+    return consumeSSE('missing-files-stream', onProgress, params);
 }
 
 export default {

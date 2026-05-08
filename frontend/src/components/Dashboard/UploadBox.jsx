@@ -7,7 +7,7 @@ const PLATFORMS = [
     { id: 'streamp2p', label: 'StreamP2P', color: '#8B5CF6' },
     { id: 'seekstreaming', label: 'SeekStreaming', color: '#10B981' },
     { id: 'upnshare', label: 'UPnShare', color: '#F97316' },
-    { id: 'rpmshare', label: 'RPMShare', color: '#3B82F6' }
+    { id: 'vidplay', label: 'VidPlay', color: '#E34D67' }
 ];
 
 /** Derive a readable name from the URL */

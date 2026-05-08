@@ -17,7 +17,7 @@ const PLATFORMS = {
     streamp2p: { baseURL: 'https://streamp2p.com/api/v1', label: 'StreamP2P' },
     seekstreaming: { baseURL: 'https://seekstreaming.com/api/v1', label: 'SeekStreaming' },
     upnshare: { baseURL: 'https://upnshare.com/api/v1', label: 'UPnShare' },
-    rpmshare: { baseURL: 'https://rpmshare.com/api/v1', label: 'RPMShare' }
+    vidplay: { baseURL: 'https://easyvidplay.com/api/v1', label: 'VidPlay' }
 };
 
 function getApiKey(platform) {
@@ -25,7 +25,7 @@ function getApiKey(platform) {
         streamp2p: [process.env.STREAMP2P_API_KEY_1, process.env.STREAMP2P_API_KEY_2, process.env.STREAMP2P_API_KEY_3],
         seekstreaming: [process.env.SEEKSTREAMING_API_KEY_1, process.env.SEEKSTREAMING_API_KEY_2, process.env.SEEKSTREAMING_API_KEY_3],
         upnshare: [process.env.UPNSHARE_API_KEY_1, process.env.UPNSHARE_API_KEY_2, process.env.UPNSHARE_API_KEY_3],
-        rpmshare: [process.env.RPMSHARE_API_KEY_1, process.env.RPMSHARE_API_KEY_2, process.env.RPMSHARE_API_KEY_3]
+        vidplay: [process.env.VIDPLAY_API_KEY_1, process.env.VIDPLAY_API_KEY_2, process.env.VIDPLAY_API_KEY_3]
     };
     return (map[platform] || []).find(k => k) || null;
 }

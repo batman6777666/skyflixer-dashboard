@@ -37,6 +37,7 @@ server-err.txt
 
 # Test and debug files (don't deploy to production)
 backend/test-*.js
+backend/test_*.js
 backend/debug-*.js
 backend/verify-*.js
 backend/check-*.js
@@ -46,3 +47,11 @@ backend/inspect-*.js
 backend/deep-*.js
 backend/final-*.js
 backend/scan-*.js
+
+# Security — prevent accidental secret leaks
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*.secret

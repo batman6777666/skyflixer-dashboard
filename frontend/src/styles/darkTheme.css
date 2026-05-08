@@ -111,7 +111,7 @@ input:focus {
 
 /* Platform Badges */
 .platform-badge { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:50%; font-size:10px; font-weight:600; margin-left:4px; }
-.platform-badge.rpm    { background:#3B82F6; color:#fff; }
+.platform-badge.vidplay { background:#E34D67; color:#fff; }
 .platform-badge.stream { background:#8B5CF6; color:#fff; }
 .platform-badge.seek   { background:#10B981; color:#fff; }
 .platform-badge.upn    { background:#F97316; color:#fff; }

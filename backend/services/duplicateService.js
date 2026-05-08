@@ -8,12 +8,12 @@
  * would double-count files and produce false duplicates.
  */
 
-import RPMShareAPI from '../api/RPMShareAPI.js';
+import VidPlayAPI from '../api/VidPlayAPI.js';
 import StreamP2PAPI from '../api/StreamP2PAPI.js';
 import SeekStreamingAPI from '../api/SeekStreamingAPI.js';
 import UPnShareAPI from '../api/UPnShareAPI.js';
 
-const PLATFORMS = ['streamp2p', 'rpmshare', 'seekstreaming', 'upnshare'];
+const PLATFORMS = ['streamp2p', 'vidplay', 'seekstreaming', 'upnshare'];
 
 // ─── Canonical key shared by all 3 functions ──────────────────
 function canonicalKey(filename) {
@@ -58,27 +58,36 @@ function getId(file) {
 
 /**
  * Create ONE client per platform using the FIRST API key only.
+ * Only creates clients for the enabled platforms.
  */
-function getClients(apiKeys) {
-    return {
-        streamp2p: new StreamP2PAPI(apiKeys.streamp2p[0]),
-        rpmshare: new RPMShareAPI(apiKeys.rpmshare[0]),
-        seekstreaming: new SeekStreamingAPI(apiKeys.seekstreaming[0]),
-        upnshare: new UPnShareAPI(apiKeys.upnshare[0])
+function getClients(apiKeys, activePlatforms) {
+    const clientMap = {
+        streamp2p: (key) => new StreamP2PAPI(key),
+        vidplay: (key) => new VidPlayAPI(key),
+        seekstreaming: (key) => new SeekStreamingAPI(key),
+        upnshare: (key) => new UPnShareAPI(key)
     };
+    const clients = {};
+    for (const p of activePlatforms) {
+        if (apiKeys[p]?.[0] && clientMap[p]) {
+            clients[p] = clientMap[p](apiKeys[p][0]);
+        }
+    }
+    return clients;
 }
 
 /**
- * Fetch ALL files from ALL platforms in parallel WITH progress.
+ * Fetch ALL files from enabled platforms in parallel WITH progress.
  * @param {Object} apiKeys
  * @param {Function} onProgress - optional({ platform, pagesCompleted, totalPages, overallPercent })
+ * @param {string[]} activePlatforms - which platforms to scan
  */
-async function fetchRaw(apiKeys, onProgress) {
-    const clients = getClients(apiKeys);
+async function fetchRaw(apiKeys, onProgress, activePlatforms) {
+    const clients = getClients(apiKeys, activePlatforms);
 
     // Track progress per platform
     const progress = {};
-    PLATFORMS.forEach(p => { progress[p] = { pagesCompleted: 0, totalPages: 1 }; });
+    activePlatforms.forEach(p => { progress[p] = { pagesCompleted: 0, totalPages: 1 }; });
 
     const emitProgress = (platform, data) => {
         progress[platform] = data;
@@ -91,12 +100,12 @@ async function fetchRaw(apiKeys, onProgress) {
     };
 
     const results = await Promise.allSettled(
-        PLATFORMS.map(p => clients[p].listAllFiles((pg) => emitProgress(p, pg)))
+        activePlatforms.map(p => clients[p].listAllFiles((pg) => emitProgress(p, pg)))
     );
 
     const raw = {};
-    for (let i = 0; i < PLATFORMS.length; i++) {
-        const p = PLATFORMS[i];
+    for (let i = 0; i < activePlatforms.length; i++) {
+        const p = activePlatforms[i];
         raw[p] = results[i].status === 'fulfilled' ? results[i].value : [];
         console.log(`  [${p}] ${raw[p].length} files`);
     }
@@ -107,14 +116,15 @@ async function fetchRaw(apiKeys, onProgress) {
 // ══════════════════════════════════════════════════════════════
 // 1. FIND DUPLICATES — within each platform
 // ══════════════════════════════════════════════════════════════
-export async function findDuplicates(apiKeys, onProgress) {
-    console.log('\n🔍 FIND DUPLICATES: scanning each platform for same-content files...');
-    const { raw } = await fetchRaw(apiKeys, onProgress);
+export async function findDuplicates(apiKeys, onProgress, enabledPlatforms) {
+    const activePlatforms = enabledPlatforms || PLATFORMS;
+    console.log(`\n🔍 FIND DUPLICATES: scanning ${activePlatforms.join(', ')} for same-content files...`);
+    const { raw } = await fetchRaw(apiKeys, onProgress, activePlatforms);
 
     const result = {};
     let totalDuplicates = 0;
 
-    for (const platform of PLATFORMS) {
+    for (const platform of activePlatforms) {
         const files = raw[platform];
 
         const keyMap = new Map();
@@ -151,13 +161,14 @@ export async function findDuplicates(apiKeys, onProgress) {
 // ══════════════════════════════════════════════════════════════
 // 2. DELETE DUPLICATES
 // ══════════════════════════════════════════════════════════════
-export async function deleteDuplicates(apiKeys, onProgress, onDeleteProgress) {
-    console.log('\n🗑️  DELETE DUPLICATES — single scan then delete...');
-    const { raw, clients } = await fetchRaw(apiKeys, onProgress);
+export async function deleteDuplicates(apiKeys, onProgress, onDeleteProgress, enabledPlatforms) {
+    const activePlatforms = enabledPlatforms || PLATFORMS;
+    console.log(`\n🗑️  DELETE DUPLICATES — scanning ${activePlatforms.join(', ')} then delete...`);
+    const { raw, clients } = await fetchRaw(apiKeys, onProgress, activePlatforms);
 
     // Collect all items to delete
     const allToDelete = [];
-    for (const platform of PLATFORMS) {
+    for (const platform of activePlatforms) {
         const files = raw[platform];
         const keyMap = new Map();
         for (const file of files) {
@@ -215,15 +226,16 @@ export async function deleteDuplicates(apiKeys, onProgress, onDeleteProgress) {
 // ══════════════════════════════════════════════════════════════
 // 3. FIND MISSING FILES — across platforms
 // ══════════════════════════════════════════════════════════════
-export async function findMissingFiles(apiKeys, onProgress) {
-    console.log('\n📋 FIND MISSING FILES: comparing across all platforms...');
-    const { raw } = await fetchRaw(apiKeys, onProgress);
+export async function findMissingFiles(apiKeys, onProgress, enabledPlatforms) {
+    const activePlatforms = enabledPlatforms || PLATFORMS;
+    console.log(`\n📋 FIND MISSING FILES: comparing ${activePlatforms.join(', ')}...`);
+    const { raw } = await fetchRaw(apiKeys, onProgress, activePlatforms);
 
     const platformCounts = {};
     const nameSets = {};
     const uniqueCounts = {};
 
-    for (const platform of PLATFORMS) {
+    for (const platform of activePlatforms) {
         platformCounts[platform] = raw[platform].length;
         nameSets[platform] = new Map();
 
@@ -239,7 +251,7 @@ export async function findMissingFiles(apiKeys, onProgress) {
     }
 
     const master = new Map();
-    for (const platform of PLATFORMS) {
+    for (const platform of activePlatforms) {
         for (const [key, name] of nameSets[platform]) {
             if (!master.has(key)) master.set(key, name);
             else if (name.toLowerCase().includes('skyflixer')) master.set(key, name);
@@ -252,8 +264,8 @@ export async function findMissingFiles(apiKeys, onProgress) {
     const syncedCount = { all4: 0 };
 
     for (const [key, rawFilename] of master) {
-        const presentIn = PLATFORMS.filter(p => nameSets[p].has(key));
-        const missingIn = PLATFORMS.filter(p => !nameSets[p].has(key));
+        const presentIn = activePlatforms.filter(p => nameSets[p].has(key));
+        const missingIn = activePlatforms.filter(p => !nameSets[p].has(key));
 
         let displayTitle;
         if (key.includes('|')) {
@@ -273,7 +285,7 @@ export async function findMissingFiles(apiKeys, onProgress) {
 
     missingFiles.sort((a, b) => a.filename.localeCompare(b.filename));
 
-    console.log(`\n✅ In sync on all 4 platforms: ${syncedCount.all4}`);
+    console.log(`\n✅ In sync on all ${activePlatforms.length} platforms: ${syncedCount.all4}`);
     console.log(`⚠️  Missing from at least 1 platform: ${missingFiles.length}`);
 
     return {

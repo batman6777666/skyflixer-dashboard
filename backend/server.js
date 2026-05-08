@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import cron from 'node-cron';
 import apiRoutes from './routes/api.js';
 
 // Load environment variables
@@ -60,18 +59,7 @@ app.use((err, req, res, next) => {
     res.status(500).json({ success: false, error: 'Internal server error' });
 });
 
-// Schedule cleanup — wrapped in try/catch so it never crashes the server
-cron.schedule('0 2 * * *', () => {
-    try {
-        console.log('🧹 Running scheduled cleanup...');
-        // statsService cleanup is optional; if DB is unavailable, skip silently
-        import('./services/statsService.js')
-            .then(mod => mod.cleanupOldRecords())
-            .catch(() => { /* DB unavailable, skip */ });
-    } catch (e) {
-        // Never crash from cron
-    }
-});
+// Note: stats handled in-memory via sessionStats.js (no database needed)
 
 // Start server
 app.listen(PORT, () => {
@@ -87,7 +75,7 @@ app.listen(PORT, () => {
     console.log(`   POST /api/rename-batch             → Batch rename files`);
     console.log(`   GET  /api/stats                    → Get statistics`);
     console.log(`\n🔐 API Keys configured (3 per provider):`);
-    console.log(`   RPMShare:       ${process.env.RPMSHARE_API_KEY_1 ? '✓' : '✗'}, ${process.env.RPMSHARE_API_KEY_2 ? '✓' : '✗'}, ${process.env.RPMSHARE_API_KEY_3 ? '✓' : '✗'}`);
+    console.log(`   VidPlay:        ${process.env.VIDPLAY_API_KEY_1 ? '✓' : '✗'}, ${process.env.VIDPLAY_API_KEY_2 ? '✓' : '✗'}, ${process.env.VIDPLAY_API_KEY_3 ? '✓' : '✗'}`);
     console.log(`   StreamP2P:      ${process.env.STREAMP2P_API_KEY_1 ? '✓' : '✗'}, ${process.env.STREAMP2P_API_KEY_2 ? '✓' : '✗'}, ${process.env.STREAMP2P_API_KEY_3 ? '✓' : '✗'}`);
     console.log(`   SeekStreaming:   ${process.env.SEEKSTREAMING_API_KEY_1 ? '✓' : '✗'}, ${process.env.SEEKSTREAMING_API_KEY_2 ? '✓' : '✗'}, ${process.env.SEEKSTREAMING_API_KEY_3 ? '✓' : '✗'}`);
     console.log(`   UPnShare:       ${process.env.UPNSHARE_API_KEY_1 ? '✓' : '✗'}, ${process.env.UPNSHARE_API_KEY_2 ? '✓' : '✗'}, ${process.env.UPNSHARE_API_KEY_3 ? '✓' : '✗'}`);

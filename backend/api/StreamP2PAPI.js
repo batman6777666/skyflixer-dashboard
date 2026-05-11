@@ -25,9 +25,7 @@ class StreamP2PAPI {
                 const files = Array.isArray(data.data) ? data.data : [];
                 const maxPage = data.metadata?.maxPage || 1;
                 return {
-                    files: files
-                        .filter(f => !((f.name || '').toLowerCase().includes('skyflixer')))
-                        .map(f => ({ ...f, platform: 'streamp2p', fileId: f.id })),
+                    files: files.map(f => ({ ...f, platform: 'streamp2p', fileId: f.id })),
                     maxPage
                 };
             } catch (error) {

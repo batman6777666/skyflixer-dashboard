@@ -29,17 +29,23 @@ function canonicalKey(filename) {
     // ── TV Episode: "ShowName S01E01 ..." ──
     const epMatch = clean.match(/^(.*?)\s+(S\d+)(E\d+)/i);
     if (epMatch) {
-        const showName = epMatch[1].replace(/\s+/g, ' ').trim().toLowerCase();
-        const season   = epMatch[2].toUpperCase();
-        const episode  = epMatch[3].toUpperCase();
-        return `${showName}|${season}|${episode}`;
+        const showBase = epMatch[1]
+            .replace(/\{[^}]*\}/g, '')      // Remove {tags}
+            .replace(/\[[^\]]*\]/g, '')      // Remove [tags]
+            .replace(/\b(1080p|720p|2160p|4k|bluray|blu ray|web dl|webrip|hdcam|hdrip|esub|msub|dubbed|hindi|english|tamil|telugu|kannada|malayalam|korean|chinese|french|spanish|arabic|malay|thai|japanese|multi|skyflixer|bollyflix|moviesmod|msubs)\b/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+        const season  = epMatch[2].toUpperCase();
+        const episode = epMatch[3].toUpperCase();
+        return `${showBase}|${season}|${episode}`;
     }
 
     // ── Movie: extract "Title (Year)" ──
     const stripped = clean
         .replace(/\{[^}]*\}/g, '')
         .replace(/\[[^\]]*\]/g, '')
-        .replace(/\b(1080p|720p|2160p|4k|bluray|blu ray|web dl|webrip|hdcam|hdrip|esub|msub|dubbed|hindi|english|tamil|telugu|kannada|malayalam|korean|chinese|french|spanish|arabic|malay|thai|japanese|multi|skyflixer|bollyflix|moviesmod|msubs)\b/gi, '')
+        .replace(/\b(1080p|720p|2160p|4k|bluray|blu ray|web dl|webrip|hdcam|hdrip|esub|msub|dubbed|hindi|english|tamil|telugu|kannada|malayalam|korean|chinese|french|spanish|arabic|malay|thai|japanese|skyflixer|bollyflix|moviesmod|msubs)\b/gi, '')
         .replace(/\s+/g, ' ')
         .trim()
         .toLowerCase();
@@ -50,6 +56,32 @@ function canonicalKey(filename) {
     }
 
     return stripped;
+}
+
+// ── Audio priority extractor ─────────────────────────────────
+function getAudioTag(filename) {
+    const name = filename.toLowerCase();
+    if (name.includes('multi audio')) return 'multi';
+    if (name.includes('hindi-english') || name.includes('english-hindi')) return 'hin-eng';
+    if (name.includes('english')) return 'english';
+    return 'unknown';
+}
+
+function getAudioPriority(tag) {
+    switch (tag) {
+        case 'multi':   return 3;
+        case 'hin-eng': return 2;
+        case 'english': return 1;
+        default:        return 0;
+    }
+}
+
+// ── Select which index to KEEP (highest priority) ─────────────
+function selectKeepIndex(group) {
+    if (group.length === 1) return 0;
+    const tagged = group.map((f, i) => ({ i, tag: getAudioTag(f.name) }));
+    tagged.sort((a, b) => getAudioPriority(b.tag) - getAudioPriority(a.tag));
+    return tagged[0].i;
 }
 
 function getId(file) {
@@ -137,8 +169,7 @@ export async function findDuplicates(apiKeys, onProgress, enabledPlatforms) {
         const platformDups = [];
         for (const [key, group] of keyMap.entries()) {
             if (group.length > 1) {
-                const skyflixerIdx = group.findIndex(f => f.name.toLowerCase().includes('skyflixer'));
-                const keepIdx = skyflixerIdx >= 0 ? skyflixerIdx : 0;
+                const keepIdx = selectKeepIndex(group);
                 const keep = group[keepIdx];
                 const remove = group.filter((_, i) => i !== keepIdx);
                 platformDups.push({ normalizedName: key, count: group.length, keep, remove });
@@ -178,8 +209,7 @@ export async function deleteDuplicates(apiKeys, onProgress, onDeleteProgress, en
         }
         for (const [, group] of keyMap.entries()) {
             if (group.length > 1) {
-                const skyflixerIdx = group.findIndex(f => f.name.toLowerCase().includes('skyflixer'));
-                const keepIdx = skyflixerIdx >= 0 ? skyflixerIdx : 0;
+                const keepIdx = selectKeepIndex(group);
                 for (let i = 0; i < group.length; i++) {
                     if (i !== keepIdx) allToDelete.push({ ...group[i], platform });
                 }

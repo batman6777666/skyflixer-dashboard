@@ -52,7 +52,7 @@ export async function fetchFilesFromAllPlatforms(apiKeys, onProgress) {
         const seekFilesData = seekFiles.status === 'fulfilled' ? seekFiles.value : [];
         const upnFilesData = upnFiles.status === 'fulfilled' ? upnFiles.value : [];
 
-        console.log(`\n📊 Deep scan complete (SKYFLIXER already filtered at API level):`);
+        console.log(`\n📊 Deep scan complete:`);
         console.log(`   VidPlay     = ${vidplayFilesData.length} files`);
         console.log(`   StreamP2P   = ${streamFilesData.length} files`);
         console.log(`   SeekStreaming = ${seekFilesData.length} files`);

@@ -52,19 +52,18 @@ export function AppProvider({ children }) {
     const updateStatsSafe = useCallback((data) => {
         if (!data || !data.success || !data.stats) return;
 
-        setStats({
+        setStats(prev => ({
             today: data.stats.today || { count: 0, successful: 0, failed: 0 },
             last24h: data.stats.last24h || { count: 0, successful: 0, failed: 0 },
-            totalFetched: files.original.length,
+            totalFetched: prev.totalFetched,
             successRate: data.stats.successRate || 0,
             recentActivity: data.stats.recentActivity || []
-        });
+        }));
 
-        // Sync activity log with recent activity
         if (data.stats.recentActivity && Array.isArray(data.stats.recentActivity)) {
             setActivityLog(data.stats.recentActivity);
         }
-    }, [files.original.length]);
+    }, []);
 
     // Fetch statistics function
     const fetchStats = useCallback(async () => {

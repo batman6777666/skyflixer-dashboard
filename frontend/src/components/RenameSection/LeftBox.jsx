@@ -16,11 +16,19 @@ const PLATFORM_LABELS = {
 export default function LeftBox() {
     const { files, updateFiles, isLoading, setIsLoading, currentPage, setCurrentPage } = useApp();
     const [searchQuery, setSearchQuery] = useState('');
-    const [fetchProgress, setFetchProgress] = useState(null); // { overallPercent, allProgress }
+    const [fetchProgress, setFetchProgress] = useState(null);
+    const [fromPage, setFromPage] = useState('1');
+    const [toPage, setToPage] = useState('20');
 
     const handleFetchFiles = async () => {
         setIsLoading(true);
         setFetchProgress({ overallPercent: 0, allProgress: {} });
+
+        const pageRange = {};
+        const from = parseInt(fromPage, 10);
+        const to = parseInt(toPage, 10);
+        if (!isNaN(from) && from >= 1) pageRange.fromPage = from;
+        if (!isNaN(to) && to >= (pageRange.fromPage || 1)) pageRange.toPage = to;
 
         try {
             const response = await fetchFilesStream((progress) => {
@@ -28,12 +36,13 @@ export default function LeftBox() {
                     overallPercent: progress.overallPercent || 0,
                     allProgress: progress.allProgress || {}
                 });
-            });
+            }, Object.keys(pageRange).length > 0 ? pageRange : undefined);
 
             if (response.success) {
                 updateFiles(response.files || []);
                 setCurrentPage(0);
-                toast.success(`✅ Fetched ${response.count} files`);
+                const rangeLabel = Object.keys(pageRange).length > 0 ? ` (pages ${pageRange.fromPage}${pageRange.toPage ? '–' + pageRange.toPage : '+'})` : '';
+                toast.success(`✅ Fetched ${response.count} files${rangeLabel}`);
             }
         } catch (error) {
             toast.error(`❌ ${error.message}`);
@@ -76,6 +85,33 @@ export default function LeftBox() {
 
                     {/* Action Buttons */}
                     <div className="flex flex-wrap gap-3 mb-4">
+                        {/* Page Range Selector */}
+                        <div className="w-full flex items-center gap-2 mb-2">
+                            <label className="text-text-secondary text-sm font-medium whitespace-nowrap">
+                                Pages:
+                            </label>
+                            <input
+                                type="number"
+                                min="1"
+                                placeholder="From"
+                                value={fromPage}
+                                onChange={(e) => setFromPage(e.target.value)}
+                                disabled={isLoading}
+                                className="w-20 px-3 py-1.5 bg-primary-bg border border-primary-border rounded-lg text-text-primary text-sm placeholder-text-secondary focus:border-accent-purple transition-all disabled:opacity-50"
+                            />
+                            <span className="text-text-secondary text-sm">to</span>
+                            <input
+                                type="number"
+                                min="1"
+                                placeholder="To"
+                                value={toPage}
+                                onChange={(e) => setToPage(e.target.value)}
+                                disabled={isLoading}
+                                className="w-20 px-3 py-1.5 bg-primary-bg border border-primary-border rounded-lg text-text-primary text-sm placeholder-text-secondary focus:border-accent-purple transition-all disabled:opacity-50"
+                            />
+                            <span className="text-text-secondary text-xs ml-auto">(leave empty = all pages)</span>
+                        </div>
+
                         <Button
                             onClick={handleFetchFiles}
                             variant="purple"

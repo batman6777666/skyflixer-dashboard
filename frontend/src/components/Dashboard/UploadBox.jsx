@@ -92,10 +92,10 @@ function PlatformCard({ platform, state }) {
 export default function UploadBox() {
     const [urls, setUrls] = useState('');
     const [uploading, setUploading] = useState(false);
-    const [currentLink, setCurrentLink] = useState('');
+    const [currentUrl, setCurrentUrl] = useState('');
     const [currentIdx, setCurrentIdx] = useState(0);
     const [totalLinks, setTotalLinks] = useState(0);
-    const [pStates, setPStates] = useState({});   // per-platform state
+    const [pStates, setPStates] = useState({});
     const [history, setHistory] = useState([]);
     const stopRef = useRef(false);
     const textareaRef = useRef(null);
@@ -134,7 +134,7 @@ export default function UploadBox() {
 
     // ── Upload one link ──────────────────────────────────────
     const uploadOne = useCallback(async (url, name) => {
-        setCurrentLink(name);
+        setCurrentUrl(url);
         resetPlatforms();
 
         // 1. Submit to all 4 platforms
@@ -179,7 +179,7 @@ export default function UploadBox() {
         toast.success(`✅ ${name} — ${successCount}/4 platforms done`);
     }, [pollPlatform]);
 
-    // ── Main upload handler ──────────────────────────────────
+    // ── Main upload handler — 2 concurrent uploads ───────────
     const handleUpload = useCallback(async () => {
         const linkList = urls.split('\n').map(l => l.trim()).filter(Boolean);
         if (linkList.length === 0) { toast.error('Paste at least one URL.'); return; }
@@ -188,29 +188,31 @@ export default function UploadBox() {
         setUploading(true);
         setTotalLinks(linkList.length);
 
-        for (let i = 0; i < linkList.length; i++) {
-            if (stopRef.current) break;
-            setCurrentIdx(i + 1);
-            const url = linkList[i];
-            const name = nameFromUrl(url);
-            toast.info(`📤 [${i + 1}/${linkList.length}] ${name}`, { autoClose: 2500 });
-            await uploadOne(url, name);
+        const CONCURRENT = 2;
+        let nextIdx = 0;
 
-            if (!stopRef.current && i < linkList.length - 1) {
-                toast.info('⏳ 5s gap…', { autoClose: 5000 });
-                await new Promise(r => setTimeout(r, 5000));
+        const worker = async () => {
+            while (nextIdx < linkList.length && !stopRef.current) {
+                const i = nextIdx++;
+                setCurrentIdx(i + 1);
+                const url = linkList[i];
+                const name = nameFromUrl(url);
+                toast.info(`📤 [${i + 1}/${linkList.length}] ${name}`, { autoClose: 2500 });
+                await uploadOne(url, name);
             }
-        }
+        };
+
+        await Promise.all(Array.from({ length: Math.min(CONCURRENT, linkList.length) }, () => worker()));
 
         setUploading(false);
-        setCurrentLink('');
+        setCurrentUrl('');
         if (linkList.length > 1 && !stopRef.current) toast.success('🎉 All uploads complete!');
     }, [urls, uploadOne]);
 
     const handleStop = () => {
         stopRef.current = true;
         setUploading(false);
-        setCurrentLink('');
+        setCurrentUrl('');
         toast.info('Stopped.');
     };
 
@@ -262,7 +264,7 @@ export default function UploadBox() {
             {linkCount > 0 && (
                 <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginBottom: '12px' }}>
                     {linkCount} link{linkCount > 1 ? 's' : ''} detected
-                    {linkCount > 1 ? ' — processed one by one with a 3s gap' : ''}
+                    {linkCount > 1 ? ' — 2 uploads at a time, no delay' : ''}
                 </div>
             )}
 
@@ -298,7 +300,7 @@ export default function UploadBox() {
                             ⏹️ Stop
                         </button>
                         <span style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>
-                            {currentIdx}/{totalLinks} — <strong style={{ color: 'var(--color-text-primary)' }}>{currentLink}</strong>
+                            {currentIdx}/{totalLinks} — <strong style={{ color: 'var(--color-text-primary)', wordBreak: 'break-all', maxWidth: '400px', display: 'inline-block' }}>{currentUrl}</strong>
                         </span>
                     </div>
                 )}
@@ -325,17 +327,40 @@ export default function UploadBox() {
                                 background: 'var(--color-primary-bg)',
                                 border: '1px solid var(--color-border)',
                                 borderRadius: '7px', padding: '8px 12px',
-                                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap'
+                                display: 'flex', flexDirection: 'column', gap: '4px'
                             }}>
-                                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    {h.name}
-                                </span>
-                                <span style={{ fontSize: '11px', color: h.successCount === 4 ? '#00D9A3' : '#F97316', fontWeight: 700, whiteSpace: 'nowrap' }}>
-                                    ✅ {h.successCount}/4
-                                </span>
-                                <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
-                                    {new Date(h.timestamp).toLocaleTimeString()}
-                                </span>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                                    <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {h.name}
+                                    </span>
+                                    <span style={{ fontSize: '11px', color: h.successCount === 4 ? '#00D9A3' : '#F97316', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                                        ✅ {h.successCount}/4
+                                    </span>
+                                    <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
+                                        {new Date(h.timestamp).toLocaleTimeString()}
+                                    </span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span style={{
+                                        fontSize: '11px', color: 'var(--color-text-secondary)', flex: 1,
+                                        wordBreak: 'break-all', lineHeight: '1.4', fontFamily: 'monospace'
+                                    }}>
+                                        {h.url}
+                                    </span>
+                                    <button
+                                        onClick={() => { navigator.clipboard.writeText(h.url); toast.info('📋 URL copied'); }}
+                                        style={{
+                                            background: 'none', border: '1px solid var(--color-border)', borderRadius: '4px',
+                                            padding: '2px 6px', cursor: 'pointer', fontSize: '10px', color: 'var(--color-text-secondary)',
+                                            flexShrink: 0, transition: 'all 0.2s'
+                                        }}
+                                        onMouseEnter={e => { e.target.style.borderColor = '#6C63FF'; e.target.style.color = '#6C63FF'; }}
+                                        onMouseLeave={e => { e.target.style.borderColor = 'var(--color-border)'; e.target.style.color = 'var(--color-text-secondary)'; }}
+                                        title="Copy URL"
+                                    >
+                                        📋
+                                    </button>
+                                </div>
                             </div>
                         ))}
                     </div>

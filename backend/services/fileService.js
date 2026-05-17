@@ -7,9 +7,10 @@ import UPnShareAPI from '../api/UPnShareAPI.js';
  * Fetch ALL files from all platforms using deep scan (all pages)
  * @param {Object} apiKeys - Object containing all API keys
  * @param {Function} onProgress - Optional callback({ platform, pagesCompleted, totalPages })
+ * @param {Object} pageRange - Optional { startPage, endPage } to limit pages fetched
  * @returns {Promise<Array>} - Array of unique files with platform information
  */
-export async function fetchFilesFromAllPlatforms(apiKeys, onProgress) {
+export async function fetchFilesFromAllPlatforms(apiKeys, onProgress, pageRange) {
     // Use first key per platform for fetching (all keys access same account data)
     const vidplayClient = new VidPlayAPI(apiKeys.vidplay[0]);
     const streamClient = new StreamP2PAPI(apiKeys.streamp2p[0]);
@@ -40,10 +41,10 @@ export async function fetchFilesFromAllPlatforms(apiKeys, onProgress) {
     try {
         // Deep scan all 4 platforms in parallel — each fetches every page
         const [vidplayFiles, streamFiles, seekFiles, upnFiles] = await Promise.allSettled([
-            vidplayClient.listAllFiles((p) => emitProgress('vidplay', p)),
-            streamClient.listAllFiles((p) => emitProgress('streamp2p', p)),
-            seekClient.listAllFiles((p) => emitProgress('seekstreaming', p)),
-            upnClient.listAllFiles((p) => emitProgress('upnshare', p))
+            vidplayClient.listAllFiles((p) => emitProgress('vidplay', p), pageRange),
+            streamClient.listAllFiles((p) => emitProgress('streamp2p', p), pageRange),
+            seekClient.listAllFiles((p) => emitProgress('seekstreaming', p), pageRange),
+            upnClient.listAllFiles((p) => emitProgress('upnshare', p), pageRange)
         ]);
 
         // Extract successful results
@@ -112,7 +113,7 @@ function normalizeFilename(filename) {
 
 /**
  * Match files across platforms and create unique list.
- * Prefers SKYFLIXER-named files for the display filename.
+ * SKYFLIXER-named files are skipped entirely — they are already renamed.
  */
 function matchFilesAcrossPlatforms(vidplayFiles, streamFiles, seekFiles, upnFiles) {
     const fileMap = new Map();
@@ -127,6 +128,10 @@ function matchFilesAcrossPlatforms(vidplayFiles, streamFiles, seekFiles, upnFile
     allPlatformFiles.forEach(({ files, platform }) => {
         files.forEach(file => {
             const originalName = file.name;
+
+            // Skip SKYFLIXER files — already renamed, not needed in fetch results
+            if (originalName.toLowerCase().includes('skyflixer')) return;
+
             const key = normalizeFilename(originalName);
 
             if (!fileMap.has(key)) {
@@ -139,11 +144,6 @@ function matchFilesAcrossPlatforms(vidplayFiles, streamFiles, seekFiles, upnFile
             }
 
             const entry = fileMap.get(key);
-
-            // Prefer SKYFLIXER-named file as display name
-            if (originalName.toLowerCase().includes('skyflixer')) {
-                entry.filename = originalName;
-            }
 
             // Avoid adding the same platform twice
             const alreadyAdded = entry.platforms.find(p => p.platform === platform);

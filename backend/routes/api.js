@@ -63,6 +63,25 @@ function getFilteredApiKeys(req) {
     return { apiKeys: filteredKeys, enabledPlatforms };
 }
 
+/**
+ * Build page range object from query params.
+ * Returns undefined if no range specified (fetch all pages).
+ * @param {Object} query - Express req.query
+ * @returns {{ startPage: number, endPage: number }|undefined}
+ */
+function buildPageRange(query) {
+    const fromPage = parseInt(query.fromPage, 10);
+    const toPage = parseInt(query.toPage, 10);
+
+    if (!isNaN(fromPage) && fromPage >= 1) {
+        return {
+            startPage: fromPage,
+            endPage: !isNaN(toPage) && toPage >= fromPage ? toPage : undefined
+        };
+    }
+    return undefined;
+}
+
 /** Helper: setup SSE response headers */
 function setupSSE(res) {
     res.writeHead(200, {
@@ -89,7 +108,8 @@ router.get('/fetch-files', async (req, res) => {
     try {
         console.log('\n📡 Fetch files request');
         const apiKeys = buildApiKeys();
-        const files = await fetchFilesFromAllPlatforms(apiKeys);
+        const pageRange = buildPageRange(req.query);
+        const files = await fetchFilesFromAllPlatforms(apiKeys, null, pageRange);
         res.json({ success: true, count: files.length, files });
     } catch (error) {
         console.error('Fetch files error:', error.message);
@@ -102,13 +122,14 @@ router.get('/fetch-files', async (req, res) => {
  */
 router.get('/fetch-files-stream', async (req, res) => {
     setupSSE(res);
-    sendSSE(res, { type: 'start', message: 'Starting deep scan...' });
+    const pageRange = buildPageRange(req.query);
+    sendSSE(res, { type: 'start', message: pageRange ? `Scanning pages ${pageRange.startPage}–${pageRange.endPage}...` : 'Starting deep scan...' });
 
     try {
         const apiKeys = buildApiKeys();
         const files = await fetchFilesFromAllPlatforms(apiKeys, (progress) => {
             sendSSE(res, { type: 'progress', ...progress });
-        });
+        }, pageRange);
         sendSSE(res, { type: 'complete', count: files.length, files });
     } catch (error) {
         sendSSE(res, { type: 'error', error: error.message });

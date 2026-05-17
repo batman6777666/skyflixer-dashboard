@@ -11,7 +11,6 @@
  */
 
 import axios from 'axios';
-import globalLimiter from './rateLimiter.js';
 
 const PLATFORMS = {
     streamp2p: { baseURL: 'https://streamp2p.com/api/v1', label: 'StreamP2P' },
@@ -48,8 +47,7 @@ export async function submitToAllPlatforms(url, name) {
 
     const doSubmit = async (platform) => {
         try {
-            const { client, apiKey } = makeClient(platform);
-            await globalLimiter.acquire(apiKey);
+            const { client } = makeClient(platform);
             const response = await client.post('/video/advance-upload', { url, name });
             const taskId = response.data?.id || response.data?.data?.id;
             if (!taskId) throw new Error('No task ID in response');
@@ -76,8 +74,7 @@ export async function submitToAllPlatforms(url, name) {
 
 // ── Poll ONE platform task status ─────────────────────────────
 export async function getPlatformStatus(platform, taskId) {
-    const { client, apiKey } = makeClient(platform);
-    await globalLimiter.acquire(apiKey);
+    const { client } = makeClient(platform);
     const response = await client.get(`/video/advance-upload/${taskId}`);
     const data = response.data?.data || response.data;
     const status = data?.status || 'Processing';

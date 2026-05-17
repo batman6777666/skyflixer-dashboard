@@ -53,8 +53,13 @@ export async function fetchFiles() {
     }
 }
 
-export function fetchFilesStream(onProgress) {
-    return consumeSSE('fetch-files-stream', onProgress);
+export function fetchFilesStream(onProgress, pageRange) {
+    const params = {};
+    if (pageRange) {
+        if (pageRange.fromPage) params.fromPage = pageRange.fromPage;
+        if (pageRange.toPage) params.toPage = pageRange.toPage;
+    }
+    return consumeSSE('fetch-files-stream', onProgress, params);
 }
 
 // ─── Rename ───────────────────────────────────────────────────

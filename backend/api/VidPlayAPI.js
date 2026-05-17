@@ -54,22 +54,28 @@ class VidPlayAPI {
         }
     }
 
-    async listAllFiles(onProgress) {
+    async listAllFiles(onProgress, pageRange) {
         const allFiles = [];
+        const { startPage = 1, endPage } = pageRange || {};
         console.log(`  -> VidPlay: Starting deep scan...`);
 
         const { files: firstPage, maxPage } = await this.listFiles(1);
-        allFiles.push(...firstPage);
-        console.log(`  -> VidPlay: Page 1/${maxPage} => ${firstPage.length} files`);
-        if (onProgress) onProgress({ pagesCompleted: 1, totalPages: maxPage });
+        const effectiveMaxPage = endPage ? Math.min(endPage, maxPage) : maxPage;
+        const effectiveStartPage = Math.max(startPage, 1);
 
-        for (let p = 2; p <= maxPage; p++) {
-            const { files } = await this.listFiles(p);
-            allFiles.push(...files);
-            if (onProgress) onProgress({ pagesCompleted: p, totalPages: maxPage });
+        if (effectiveStartPage === 1) {
+            allFiles.push(...firstPage);
+            console.log(`  -> VidPlay: Page 1/${effectiveMaxPage} => ${firstPage.length} files`);
+            if (onProgress) onProgress({ pagesCompleted: 1, totalPages: effectiveMaxPage });
         }
 
-        console.log(`  -> VidPlay: Done — ${allFiles.length} files (${maxPage} pages)`);
+        for (let p = Math.max(effectiveStartPage, 2); p <= effectiveMaxPage; p++) {
+            const { files } = await this.listFiles(p);
+            allFiles.push(...files);
+            if (onProgress) onProgress({ pagesCompleted: p - effectiveStartPage + 1, totalPages: effectiveMaxPage });
+        }
+
+        console.log(`  -> VidPlay: Done — ${allFiles.length} files (${effectiveMaxPage} pages scanned)`);
         return allFiles;
     }
 
